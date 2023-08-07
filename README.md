@@ -1,6 +1,6 @@
 # FireLighT - (FTL)
 
-![FireLighT Logo](https://example.com/firelight-logo.png)
+![FireLighT Logo](https://github.com/TTrapper/FireLighT/blob/main/logo.jpeg?raw=true)
 
 FireLighT is a Python project designed to name our band by using AI to analyze and understand our preferences.
 
