@@ -49,6 +49,14 @@ TBD
 
 We welcome contributions from the community to enhance the project. If you have any suggestions or want to report issues, please feel free to open an issue or submit a pull request.
 
+##TODO
+
+1 Integrate stable diffusion's webui: https://github.com/lllyasviel/stable-diffusion-webui-forge
+
+2 SLERP one word at a time
+
+3 Add expression control 
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
