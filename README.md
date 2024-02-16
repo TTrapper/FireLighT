@@ -49,7 +49,7 @@ TBD
 
 We welcome contributions from the community to enhance the project. If you have any suggestions or want to report issues, please feel free to open an issue or submit a pull request.
 
-##TODO
+## TODO
 
 1 Integrate stable diffusion's webui: https://github.com/lllyasviel/stable-diffusion-webui-forge
 
