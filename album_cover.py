@@ -63,7 +63,7 @@ mediums = [
 
 
 pipe = StableDiffusionPipeline.from_pretrained(
-    'stabilityai/stable-diffusion-2-base',
+    'stabilityai/stable-diffusion-2-1-base',
     torch_dtype=torch.float16
 )
 pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
