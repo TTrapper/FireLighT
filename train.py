@@ -14,6 +14,7 @@ def load_data(fpath, labelcol=None):
     df['ftl'] = df['f'] + ' ' + df['t'] + ' ' + df['l']
     if labelcol:
         df['labels'] = df[labelcol]
+        print(df[df['labels'] == 1.0])
     return df
 
 def plot_projections(embeddings, df):
@@ -35,20 +36,14 @@ def plot_projections(embeddings, df):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--trainfile',
-        default='ftl-train.csv',
-        type=str,
-        help='a csv file with columns "f", "t", "l", and "labels"'
-    )
-    parser.add_argument('--labelcol', default='labels', type=str, help='name of column containing labels')
-    parser.add_argument(
-        '--testfile',
-        default='ftl-test.csv',
-        type=str,
-        help='a csv file with columns "f", "t", "l"'
-    )
-    parser.add_argument('--do_project', action='store_true', help='flag to plot embedding projections')
+    parser.add_argument('--trainfile', default='ftl-train.csv', type=str,
+        help='a csv file with columns "f", "t", "l", and "labels"')
+    parser.add_argument('--labelcol', default='labels', type=str,
+        help='name of column containing labels')
+    parser.add_argument('--testfile', default='ftl-test.csv', type=str,
+        help='a csv file with columns "f", "t", "l"')
+    parser.add_argument('--do_project', action='store_true',
+        help='flag to plot embedding projections')
     args = parser.parse_args()
 
     df = load_data(args.trainfile, args.labelcol)
@@ -66,7 +61,7 @@ if __name__ == "__main__":
     y_train = np.reshape(y_train, [-1, 1])
     y_train = np.where(y_train == 0.5, 0.0, y_train)
     # Train SVM classifier
-    svm_classifier = SVC(kernel='linear', probability=True)
+    svm_classifier = SVC(kernel='rbf', gamma='auto', probability=True)
     svm_classifier.fit(x_train, y_train)
 
     # Make predictions on the test set
