@@ -1,20 +1,22 @@
+import argparse
 import itertools
 import pandas as pd
 
 def load_data(fname):
-    df = pd.read_csv('./ftl.csv')
-    f, t, l = (df['F'].dropna().drop_duplicates(),
-               df['T'].dropna().drop_duplicates(),
-               df['L'].dropna().drop_duplicates())
-    # return the cartesian product of the columns
-    ftl = pd.DataFrame(list(itertools.product(f, t, l)), columns=['F', 'T', 'L'])
-    ftl['FTL'] = ftl[['F','T','L']].agg(','.join, axis=1)
-    return ftl
+    df = pd.read_csv(fname)
+    f, t, l = (df['f'].dropna().drop_duplicates(),
+               df['t'].dropna().drop_duplicates(),
+               df['l'].dropna().drop_duplicates())
+    return f, t, l
 
 if __name__ == '__main__':
-    num_print = 4000
-    ftl = load_data('./ftl.csv').sample(frac=1)
-    
-    for i in range(num_print):
-        print(ftl['FTL'].iloc[i])
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--generate_all', action='store_true')
+    args = parser.parse_args()
+
+    if args.generate_all:
+        f, t, l = load_data('./ftl.csv').sample(frac=1)
+        # cartesian product of the columns is every possible acronym
+        ftl = pd.DataFrame(list(itertools.product(f, t, l)), columns=['f', 't', 'l'])
+        ftl.to_csv('./ftl-all.csv', index=False)
 
