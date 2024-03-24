@@ -224,145 +224,7 @@ class Pipeline(StableDiffusionPipeline):
 
         return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept), noise, first_latents
 
-class InterpolateSolver(DPMSolverMultistepScheduler):
-    '''
-
-    DPMSolverMultistepScheduler {
-      "_class_name": "DPMSolverMultistepScheduler",
-      "_diffusers_version": "0.19.3",
-      "algorithm_type": "dpmsolver++",
-      "beta_end": 0.012,
-      "beta_schedule": "scaled_linear",
-      "beta_start": 0.00085,
-      "clip_sample": false,
-      "dynamic_thresholding_ratio": 0.995,
-      "lambda_min_clipped": -Infinity,
-      "lower_order_final": true,
-      "num_train_timesteps": 1000,
-      "prediction_type": "epsilon",
-      "sample_max_value": 1.0,
-      "set_alpha_to_one": false,
-      "skip_prk_steps": true,
-      "solver_order": 2,
-      "solver_type": "midpoint",
-      "steps_offset": 1,
-      "thresholding": false,
-      "timestep_spacing": "linspace",
-      "trained_betas": null,
-      "use_karras_sigmas": false,
-      "variance_type": null
-    }
-
-    '''
-    def __init__(self):
-        self.current_steps = 0
-        super().__init__(
-            num_train_timesteps = 1000,
-            beta_start = 0.0001,
-            beta_end = 0.012,
-            beta_schedule = "scaled_linear",
-            trained_betas = None,
-            solver_order = 2,
-            prediction_type = "epsilon",
-            thresholding = False,
-            dynamic_thresholding_ratio = 0.995,
-            sample_max_value = 1.0,
-            algorithm_type = "dpmsolver++",
-            solver_type = "midpoint",
-            lower_order_final = True,
-            use_karras_sigmas = False,
-            lambda_min_clipped = -float("inf"),
-            variance_type = None,
-            timestep_spacing = "linspace",
-            steps_offset = 1,
-        )
-
-    def reset(self, noise):
-        self.current_steps = 0
-        self.noise = noise
-
-    def step(
-        self,
-        model_output: torch.FloatTensor,
-        timestep: int,
-        sample: torch.FloatTensor,
-        generator=None,
-        return_dict: bool = True,
-    ) -> Union[SchedulerOutput, Tuple]:
-        """
-        Step function propagating the sample with the multistep DPM-Solver.
-
-        Args:
-            model_output (`torch.FloatTensor`): direct output from learned diffusion model.
-            timestep (`int`): current discrete timestep in the diffusion chain.
-            sample (`torch.FloatTensor`):
-                current instance of sample being created by diffusion process.
-            return_dict (`bool`): option for returning tuple rather than SchedulerOutput class
-
-        Returns:
-            [`~scheduling_utils.SchedulerOutput`] or `tuple`: [`~scheduling_utils.SchedulerOutput`] if `return_dict` is
-            True, otherwise a `tuple`. When returning a tuple, the first element is the sample tensor.
-
-        """
-        if self.num_inference_steps is None:
-            raise ValueError(
-                "Number of inference steps is 'None', you need to run 'set_timesteps' after creating the scheduler"
-            )
-
-        if isinstance(timestep, torch.Tensor):
-            timestep = timestep.to(self.timesteps.device)
-        step_index = (self.timesteps == timestep).nonzero()
-        if len(step_index) == 0:
-            step_index = len(self.timesteps) - 1
-        else:
-            step_index = step_index.item()
-        prev_timestep = 0 if step_index == len(self.timesteps) - 1 else self.timesteps[step_index + 1]
-        lower_order_final = (
-            (step_index == len(self.timesteps) - 1) and self.config.lower_order_final and len(self.timesteps) < 15
-        )
-        lower_order_second = (
-            (step_index == len(self.timesteps) - 2) and self.config.lower_order_final and len(self.timesteps) < 15
-        )
-
-        model_output = self.convert_model_output(model_output, timestep, sample)
-        for i in range(self.config.solver_order - 1):
-            self.model_outputs[i] = self.model_outputs[i + 1]
-        self.model_outputs[-1] = model_output
-        if self.config.algorithm_type in ["sde-dpmsolver", "sde-dpmsolver++"]:
-            noise = randn_tensor(
-                model_output.shape, generator=generator, device=model_output.device, dtype=model_output.dtype
-            )
-        else:
-            noise = None
-
-        if self.config.solver_order == 1 or self.lower_order_nums < 1 or lower_order_final:
-            prev_sample = self.dpm_solver_first_order_update(
-                model_output, timestep, prev_timestep, sample, noise=noise
-            )
-        elif self.config.solver_order == 2 or self.lower_order_nums < 2 or lower_order_second:
-            timestep_list = [self.timesteps[step_index - 1], timestep]
-            prev_sample = self.multistep_dpm_solver_second_order_update(
-                self.model_outputs, timestep_list, prev_timestep, sample, noise=noise
-            )
-        else:
-            timestep_list = [self.timesteps[step_index - 2], self.timesteps[step_index - 1], timestep]
-            prev_sample = self.multistep_dpm_solver_third_order_update(
-                self.model_outputs, timestep_list, prev_timestep, sample
-            )
-
-        if self.lower_order_nums < self.config.solver_order:
-            self.lower_order_nums += 1
-
-
-        prev_sample = self.noise[self.current_steps]
-        self.current_steps += 1
-        if not return_dict:
-            return (prev_sample,)
-
-        return SchedulerOutput(prev_sample=prev_sample)
-
-
-def prompt_embed(pipe, prompt):
+def embed_prompt(pipe, prompt):
     prompt_embeds = pipe._encode_prompt(
         prompt,
         device='cuda',
@@ -402,6 +264,20 @@ def slerp(p0, p1, t):
     rotated = np.sin((1.0 - t) * omega) / sin_omega * p0 + np.sin(t * omega) / sin_omega * p1
     return np.reshape(rotated, shape)
 
+def interpolate(start, target, nframes, type):
+    if type == 'linear':
+        interpolations = np.linspace(start, target, nframes)[1:]
+    elif type == 'slerp':
+        interpolated_points = []
+        for i in range(nframes):
+            t = i / (nframes - 1)
+            interpolated = slerp(start, target, t)
+            interpolated_points.append(interpolated)
+        interpolations = np.array(interpolated_points)
+    else:
+        raise ValueError(f'Unrecognized interpolation type {type}')
+    return interpolations
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--start_image', required=True, type=str)
@@ -415,7 +291,7 @@ if __name__ == '__main__':
         os.makedirs(args.destination)
 
     pipe = Pipeline.from_pretrained(
-        'stabilityai/stable-diffusion-2-base',
+        'stabilityai/stable-diffusion-2-base', # FIXME this ought to come from image metadata
         torch_dtype=torch.float16,
     )
     pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
@@ -437,27 +313,15 @@ if __name__ == '__main__':
     print(target_seed)
 
     # PROMPT INTERPOLATION
-    start_prompt_embeds = prompt_embed(pipe, start_prompt)
-    target_prompt_embeds = prompt_embed(pipe, target_prompt)
-    prompt_interpolations = np.linspace(
+    start_prompt_embeds = embed_prompt(pipe, start_prompt)
+    target_prompt_embeds = embed_prompt(pipe, target_prompt)
+    prompt_interpolations = interpolate(
         start_prompt_embeds.cpu().detach().numpy(),
         target_prompt_embeds.cpu().detach().numpy(),
-        args.nframes
-    )[1:]
+        args.nframes,
+        'slerp'
+    )
 
-    '''
-    # PROMPT SLERP
-    interpolated_points = []
-    start_prompt_embeds = start_prompt_embeds.cpu().detach().numpy()
-    target_prompt_embeds = target_prompt_embeds.cpu().detach().numpy()
-    for i in range(args.nframes):
-        t = i / (args.nframes - 1)  # Interpolation parameter between 0 and 1
-        interpolated = slerp(start_prompt_embeds, target_prompt_embeds, t)
-        interpolated_points.append(interpolated)
-    prompt_interpolations = np.array(interpolated_points)
-    start_prompt_embeds = torch.from_numpy(start_prompt_embeds).to('cuda')
-    target_prompt_embeds = torch.from_numpy(target_prompt_embeds).to('cuda')
-    '''
     # START IMAGE
     start_generator = torch.manual_seed(start_seed)
     pipe_out, start_noise, start_latents = pipe(
@@ -468,18 +332,6 @@ if __name__ == '__main__':
     start_image = pipe_out.images[0]
     start_image.save(f'{args.destination}/start.png')
     start_std, start_mean = torch.std_mean(start_latents, keepdim=True)
-    '''
-    # RANDOM LATENT    
-    start_generator = torch.manual_seed(start_seed)
-    pipe_out, start_noise, start_latents = pipe(
-        prompt_embeds=start_prompt_embeds[None],
-        generator=start_generator,
-        latents=start_latents,
-        num_inference_steps=args.steps
-    )
-    start_image = pipe_out.images[0]
-    start_image.save(f'{args.destination}/random_start.png')
-    '''
     
     # TARGET IMAGE
     target_generator = torch.manual_seed(target_seed)
@@ -490,60 +342,27 @@ if __name__ == '__main__':
     )
     target_image = pipe_out.images[0]
     target_image.save(f'{args.destination}/target.png')
-    
-    
+
+
     #########################################
-
-    # LATENT INTERPOLATION 
-    latent_interpolations = np.linspace(
-        start_latents.cpu().detach().numpy(),
-        target_latents.cpu().detach().numpy(),
-        args.nframes
-    )[1:]
-
     # LATENT SLERP
-    interpolated_points = []
     start_latents = start_latents.cpu().detach().numpy()
     target_latents = target_latents.cpu().detach().numpy()
-    for i in range(args.nframes):
-        t = i / (args.nframes - 1)  # Interpolation parameter between 0 and 1
-        interpolated = slerp(start_latents, target_latents, t)
-        interpolated_points.append(interpolated)
-    latent_interpolations = np.array(interpolated_points)
-    
+    latent_interpolations = interpolate(start_latents, target_latents, args.nframes, 'slerp')
+
     # NOISE INTERPOLATION
     noise_interpolations = []
+    start_noise = [noise.cpu().detach().numpy() for noise in start_noise]
+    target_noise = [noise.cpu().detach().numpy() for noise in target_noise]
     for s_noise, t_noise in zip(start_noise, target_noise):
-        interpolations = np.linspace(
-            s_noise.cpu().detach().numpy(),
-            t_noise.cpu().detach().numpy(),
-            args.nframes
-        )[1:]
-        noise_interpolations.append(interpolations)
+        noise_interpolations.append(
+            interpolate(s_noise, t_noise, args.nframes, 'linear')
+        )
     noise_interpolations = np.concatenate(noise_interpolations, axis=1)
 
     #################################################
 
     images = [start_image]
-    
-
-    '''
-    # RANDOM WALK
-    latent_walk = start_latents
-    pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-    for i in range(args.nframes):
-        start_generator = torch.manual_seed(start_seed)
-        latent_walk += 0.01*torch.normal(torch.tile(start_mean, [1,4,64,64]), start_std)
-        pipe_out, middle_noise, middle_latents = pipe(
-            prompt_embeds=start_prompt_embeds[None],
-            generator=start_generator,
-            latents=latent_walk,
-            num_inference_steps=args.steps
-        )
-        image = pipe_out.images[0]
-        image.save(f'{args.destination}/image_{len(images)}.png')
-        images.append(image)
-    '''
     # IMAGE-PROMPT INTERPOLATION
     pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
     for i, prompt_embed in enumerate(prompt_interpolations):
@@ -558,7 +377,6 @@ if __name__ == '__main__':
         images.append(image)
 
     # IMAGE-LATENT INTERPOLATION
-#    pipe.scheduler = InterpolateSolver.from_config(pipe.scheduler.config)
     for i, (noise, latents) in enumerate(
         zip(noise_interpolations, latent_interpolations)
     ):
