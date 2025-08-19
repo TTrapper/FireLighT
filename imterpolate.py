@@ -10,6 +10,7 @@ import numpy as np
 
 from datetime import datetime
 
+
 from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.schedulers.scheduling_utils import SchedulerOutput
@@ -224,6 +225,142 @@ class Pipeline(StableDiffusionPipeline):
 
         return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept), noise, first_latents
 
+def encode_prompt_from_word_embeds(
+    word_embeds,
+    device,
+    num_images_per_prompt,
+):
+    r"""
+
+    This method is adapted from StableDiffusionPipeline.encode_prompt so that we can encode a prompt from the 
+    token embeddings using CustomCLIPTextTransformer rather on just the token ids.
+
+    Encodes the prompt into text encoder hidden states.
+
+    Args:
+            prompt (`str` or `List[str]`, *optional*):
+            prompt to be encoded
+        device: (`torch.device`):
+            torch device
+        num_images_per_prompt (`int`):
+            number of images that should be generated per prompt
+    """
+
+    text_encoder = CustomCLIPTextTransformer(pipe)
+
+    prompt_embeds = text_encoder(
+        word_embeds
+    )
+    prompt_embeds = prompt_embeds[0]
+
+    prompt_embeds = prompt_embeds.to(dtype=pipe.text_encoder.dtype, device=device)
+
+    bs_embed, seq_len, _ = prompt_embeds.shape
+    # duplicate text embeddings for each generation per prompt, using mps friendly method
+    prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
+    prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
+
+    return prompt_embeds
+
+from torch import nn
+from transformers.modeling_outputs import BaseModelOutputWithPooling
+class CustomCLIPTextTransformer(nn.Module):
+    '''
+    The point of re-definining this class is here is to have a version that accepts
+    token embeddings directly instead of token ids.
+    '''
+    def __init__(self, pipe):
+        super().__init__()
+        self.config = pipe.text_encoder.text_model.config
+        embed_dim = self.config.hidden_size
+        self.embeddings = pipe.text_encoder.text_model.embeddings
+        self.encoder = pipe.text_encoder.text_model.encoder
+        self.final_layer_norm = pipe.text_encoder.text_model.final_layer_norm#nn.LayerNorm(embed_dim, eps=self.config.layer_norm_eps, device=pipe.device)
+
+    def _build_causal_attention_mask(self, bsz, seq_len, dtype):
+        # lazily create causal attention mask, with full attention between the vision tokens
+        # pytorch uses additive attention mask; fill with -inf
+        mask = torch.empty(bsz, seq_len, seq_len, dtype=dtype)
+        mask.fill_(torch.tensor(torch.finfo(dtype).min))
+        mask.triu_(1)  # zero out the lower diagonal
+        mask = mask.unsqueeze(1)  # expand mask
+        return mask
+    
+    def forward(
+        self,
+        input_embeds: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ):
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        input_shape = input_embeds.size()
+
+        hidden_states = input_embeds
+
+        bsz, seq_len, _ = input_shape
+        # CLIP's text model uses causal mask, prepare it here.
+        # https://github.com/openai/CLIP/blob/cfcffb90e69f37bf2ff1e988237a0fbe41f33c04/clip/model.py#L324
+        causal_attention_mask = self._build_causal_attention_mask(bsz, seq_len, hidden_states.dtype).to(
+            hidden_states.device
+        )
+        # expand attention_mask
+        if attention_mask is not None:
+            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+            attention_mask = _expand_mask(attention_mask, hidden_states.dtype)
+
+        encoder_outputs = self.encoder(
+            inputs_embeds=hidden_states,
+            attention_mask=attention_mask,
+            causal_attention_mask=causal_attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        last_hidden_state = encoder_outputs[0]
+        last_hidden_state = self.final_layer_norm(last_hidden_state.to(dtype=self.final_layer_norm.weight.dtype))
+
+        # text_embeds.shape = [batch_size, sequence_length, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        # casting to torch.int for onnx compatibility: argmax doesn't support int64 inputs with opset 14
+        # 
+        # NOTE that the creal CLIPTextTransformer handles batches of different sequence lengths like this:
+        #
+        # pooled_output = last_hidden_state[
+        #    torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
+        #    input_ids.to(dtype=torch.int, device=last_hidden_state.device).argmax(dim=-1),
+        # ]
+        pooled_output = last_hidden_state[:, -1]
+
+        if not return_dict:
+            return (last_hidden_state, pooled_output) + encoder_outputs[1:]
+
+        return BaseModelOutputWithPooling(
+            last_hidden_state=last_hidden_state,
+            pooler_output=pooled_output,
+            hidden_states=encoder_outputs.hidden_states,
+            attentions=encoder_outputs.attentions,
+        )
+
+def get_word_embeds(pipe, prompt):
+    text_inputs = pipe.tokenizer(
+        prompt,
+        padding="max_length",
+        max_length=pipe.tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+    )
+    text_input_ids = text_inputs.input_ids
+    return pipe.text_encoder.text_model.embeddings(text_input_ids.to('cuda'))
+
 def embed_prompt(pipe, prompt):
     prompt_embeds = pipe._encode_prompt(
         prompt,
@@ -278,11 +415,94 @@ def interpolate(start, target, nframes, type):
         raise ValueError(f'Unrecognized interpolation type {type}')
     return interpolations
 
+def word_by_word_interpolation(pipe, start_prompt, target_prompt, nframes):
+    # Step 1: Split prompts into words
+    start_words = start_prompt.split()
+    target_words = target_prompt.split()
+    max_words = max(len(start_words), len(target_words))
+
+    # Embed the entire start and target prompts
+    start_prompt_embeds = embed_prompt(pipe, start_prompt).cpu().detach().numpy()
+    target_prompt_embeds = embed_prompt(pipe, target_prompt).cpu().detach().numpy()
+
+    # Step 2: Calculate frames per transition, distributing extra frames evenly
+    frames_per_transition = nframes // max_words
+    extra_frames = nframes % max_words  # Extra frames to distribute
+
+    # Initialize list to store the interpolated frames
+    prompt_interpolations = []
+
+    # Step 3: Interpolate embeddings, gradually replacing words
+    previous_embeds = start_prompt_embeds
+    previous_prompt = start_prompt
+    current_words = start_words.copy()
+    for i in range(len(start_words) + len(target_words)):
+        # Calculate the number of frames for this transition, adding 1 if extra frames remain
+        transition_frames = frames_per_transition + (1 if i < extra_frames else 0)
+        '''
+        # Create current prompt by replacing up to `i+1` words from the start prompt with words from the target prompt
+        current_words = start_words.copy()
+        for j in range(i + 1):
+            if j < len(target_words):  # Ensure we stay within bounds of target words
+                if j < len(current_words):  # Ensure we stay within bounds of start words
+                    current_words[j] = target_words[j]
+                else:
+                    current_words.append(target_words[j])
+
+        # If we have replaced all target words and still have extra start words, trim from the end
+        if i + 1 > len(target_words) and len(current_words) > len(target_words):
+            current_words = current_words[:len(target_words)]
+        '''        
+        print(i, len(start_words), len(target_words))
+        if i < len(target_words):
+            current_words.append(target_words[i])
+        else:
+            current_words = current_words[1:]
+    
+        # Embed the current prompt with modified words
+        current_prompt = " ".join(current_words)
+        if current_prompt == previous_prompt:
+            continue
+        current_embeds = embed_prompt(pipe, current_prompt).cpu().detach().numpy()
+        print(previous_prompt)
+        print(current_prompt)
+        print()
+
+        # Interpolate between the previous embeddings and the current embeddings
+        interpolated_embeds = interpolate(
+            previous_embeds,
+            current_embeds,
+            transition_frames,
+            'linear'
+        )
+
+        # Append interpolated embeddings for this transition
+        prompt_interpolations.extend(interpolated_embeds)
+
+        # Update previous embeddings to the current embeddings for the next iteration
+        previous_embeds = current_embeds
+        previous_prompt = current_prompt
+
+    print(target_prompt)
+
+    # Ensure we return exactly nframes
+    if len(prompt_interpolations) > nframes:
+        prompt_interpolations = prompt_interpolations[:nframes]
+
+    return prompt_interpolations
+
+def rising_falling_trajectory(N):
+    # Create a tensor of evenly spaced points from 0 to pi
+    x = torch.linspace(0, torch.pi, steps=N)
+    # Apply sine function to create the rising and falling trajectory
+    trajectory = torch.sin(x)
+    return trajectory
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--start_image', required=True, type=str)
     parser.add_argument('--target_image', required=True, type=str)
-    parser.add_argument('--steps', default=25, type=int)
+    parser.add_argument('--steps', default=50, type=int)
     parser.add_argument('--nframes', default=100, type=int)
     parser.add_argument('--destination', default='./prompt-interp', type=str)
     args = parser.parse_args()
@@ -291,7 +511,7 @@ if __name__ == '__main__':
         os.makedirs(args.destination)
 
     pipe = Pipeline.from_pretrained(
-        'stabilityai/stable-diffusion-2-base', # FIXME this ought to come from image metadata
+        'stabilityai/stable-diffusion-2-1-base',
         torch_dtype=torch.float16,
     )
     pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
@@ -313,18 +533,48 @@ if __name__ == '__main__':
     print(target_seed)
 
     # PROMPT INTERPOLATION
+    # We split the embedding layer from the rest of the encoder so that we can 
+    # interpolate over the inputs rather than the outputs of the text encoder 
+    start_prompt_word_embeds = get_word_embeds(pipe, start_prompt)
+    start_prompt_embeds= encode_prompt_from_word_embeds(start_prompt_word_embeds, 'cuda', 1)[0]
+    target_prompt_word_embeds = get_word_embeds(pipe, target_prompt)
+    target_prompt_embeds = encode_prompt_from_word_embeds(target_prompt_word_embeds, 'cuda', 1)[0]
+
+    prompt_interpolations = interpolate(
+        start_prompt_word_embeds.cpu().detach().numpy(),
+        target_prompt_word_embeds.cpu().detach().numpy(),
+        args.nframes,
+        'linear'
+    )
+ 
+    encoded_interpolations = []
+    for interp_sample in prompt_interpolations:
+        interp_sample = torch.from_numpy(interp_sample).to('cuda')
+        encoded_interpolations.append(
+            encode_prompt_from_word_embeds(interp_sample, 'cuda', 1).cpu().detach().numpy()[0]
+        )
+    prompt_interpolations = np.stack(encoded_interpolations)
+    '''
+    print(start_prompt_embeds.shape)
+
     start_prompt_embeds = embed_prompt(pipe, start_prompt)
+    print(start_prompt_embeds.shape)
     target_prompt_embeds = embed_prompt(pipe, target_prompt)
+    print(prompt_interpolations.shape)
     prompt_interpolations = interpolate(
         start_prompt_embeds.cpu().detach().numpy(),
         target_prompt_embeds.cpu().detach().numpy(),
         args.nframes,
         'slerp'
     )
+    '''
+    print(prompt_interpolations.shape)
+
 
     # START IMAGE
     start_generator = torch.manual_seed(start_seed)
     pipe_out, start_noise, start_latents = pipe(
+        prompt=None,
         prompt_embeds=start_prompt_embeds[None],
         generator=start_generator,
         num_inference_steps=args.steps
@@ -332,7 +582,7 @@ if __name__ == '__main__':
     start_image = pipe_out.images[0]
     start_image.save(f'{args.destination}/start.png')
     start_std, start_mean = torch.std_mean(start_latents, keepdim=True)
-    
+
     # TARGET IMAGE
     target_generator = torch.manual_seed(target_seed)
     pipe_out, target_noise, target_latents = pipe(
@@ -342,7 +592,6 @@ if __name__ == '__main__':
     )
     target_image = pipe_out.images[0]
     target_image.save(f'{args.destination}/target.png')
-
 
     #########################################
     # LATENT SLERP
