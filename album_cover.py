@@ -61,7 +61,7 @@ mediums = [
     '',
 ]
 
-
+steps = 50
 pipe = StableDiffusionPipeline.from_pretrained(
     'stabilityai/stable-diffusion-2-1-base',
     torch_dtype=torch.float16
@@ -84,7 +84,7 @@ for i in range(len(names)):
 
     # create a generator for reproducibility; notice you don't place it on the GPU!
     generator = torch.manual_seed(seed)
-    image = pipe(prompt, generator=generator).images[0]
+    image = pipe(prompt, generator=generator, num_inference_steps=steps).images[0]
     image.save(savepath)
 
     image = Image.open(savepath)
@@ -93,7 +93,7 @@ for i in range(len(names)):
     metadata.add_text("name", f"{name}")
     metadata.add_text("prompt", prompt)
     metadata.add_text("seed", str(seed))
-
+    metadata.add_text("steps", str(steps))
     image.save(savepath, pnginfo=metadata)
     image = Image.open(savepath)
     print(image.text)
