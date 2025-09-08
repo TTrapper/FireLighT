@@ -543,8 +543,9 @@ def interpolate_nodes():
 
     newly_created_node_ids = []
 
-    for i in range(steps):
-        alpha = i / (steps - 1)
+    # We skip the first and last step as they are the start/end nodes themselves
+    for i in range(1, steps - 1):
+        alpha = i / (steps - 1.0)
         
         # Get interpolated tensors
         interp_latents = torch.from_numpy(latent_interpolations[i]).to(start_latents.dtype)
@@ -573,7 +574,7 @@ def interpolate_nodes():
                 "lora": LORA_NAME,
                 "pipeline": PIPELINE
             },
-            "prompt_text": None,
+            "prompt_text": f"Interpolation of {start_node_id[:4]} and {end_node_id[:4]}",
             "seed": None,
             "created_at": datetime.utcnow().isoformat(),
             "parent_nodes": [start_node_id, end_node_id],
@@ -588,16 +589,16 @@ def interpolate_nodes():
     # Create a new timeline for this interpolation
     timeline_id = str(uuid.uuid4())
     timeline_path = os.path.join(TIMELINES_DIR, f"{timeline_id}.json")
-
-    # Build the new linked-list structure for nodes
+    
+    # Build the new linked-list structure for nodes, including start and end nodes
+    all_involved_nodes = [start_node_id] + newly_created_node_ids + [end_node_id]
     linked_nodes = {}
-    start_node_id_new = None
-    if newly_created_node_ids:
-        start_node_id_new = newly_created_node_ids[0]
-        for i, node_id in enumerate(newly_created_node_ids):
-            prev_node = newly_created_node_ids[i-1] if i > 0 else None
-            next_node = newly_created_node_ids[i+1] if i < len(newly_created_node_ids) - 1 else None
-            linked_nodes[node_id] = {"prev": prev_node, "next": next_node}
+    start_node_id_new = all_involved_nodes[0]
+    for i, node_id in enumerate(all_involved_nodes):
+        prev_node = all_involved_nodes[i-1] if i > 0 else None
+        next_node = all_involved_nodes[i+1] if i < len(all_involved_nodes) - 1 else None
+        linked_nodes[node_id] = {"prev": prev_node, "next": next_node}
+
 
     timeline = {
         "id": timeline_id,
@@ -606,6 +607,78 @@ def interpolate_nodes():
         "start_node_id": start_node_id_new,
         "nodes": linked_nodes
     }
+    with open(timeline_path, 'w') as f:
+        json.dump(timeline, f, indent=2)
+
+    return jsonify(timeline)
+
+@app.route('/v1/timelines/<timeline_id>/interpolate', methods=['POST'])
+def interpolate_in_timeline(timeline_id):
+    timeline_path = os.path.join(TIMELINES_DIR, f"{timeline_id}.json")
+    if not os.path.exists(timeline_path):
+        return jsonify({"error": "Timeline not found"}), 404
+        
+    data = request.json
+    start_node_id = data.get('start_node_id')
+    end_node_id = data.get('end_node_id')
+    steps = int(data.get('steps', 10)) # Default to a smaller number for in-place
+
+    with open(timeline_path, 'r') as f:
+        timeline = json.load(f)
+
+    # --- Validation ---
+    if start_node_id not in timeline['nodes'] or end_node_id not in timeline['nodes']:
+        return jsonify({"error": "Start or end node not in the specified timeline"}), 400
+    if timeline['nodes'][start_node_id].get('next') != end_node_id:
+        return jsonify({"error": "The selected nodes are not consecutive in this timeline"}), 400
+
+    # --- Interpolation Logic (re-used) ---
+    start_latents = torch.load(os.path.join(TENSORS_DIR, f"{start_node_id}_latent.pt"))
+    start_prompts = torch.load(os.path.join(TENSORS_DIR, f"{start_node_id}_prompt_embed.pt"))
+    end_latents = torch.load(os.path.join(TENSORS_DIR, f"{end_node_id}_latent.pt"))
+    end_prompts = torch.load(os.path.join(TENSORS_DIR, f"{end_node_id}_prompt_embed.pt"))
+
+    latent_interpolations = interpolate(start_latents.detach().cpu().numpy(), end_latents.detach().cpu().numpy(), steps, 'slerp')
+    prompt_embed_interpolations = interpolate(start_prompts.detach().cpu().numpy(), end_prompts.detach().cpu().numpy(), steps, 'linear')
+
+    newly_created_node_ids = []
+    # We skip the first and last step as they would be duplicates of start/end nodes
+    for i in range(1, steps - 1):
+        alpha = i / (steps - 1.0)
+        interp_latents = torch.from_numpy(latent_interpolations[i]).to(start_latents.dtype)
+        interp_prompts = torch.from_numpy(prompt_embed_interpolations[i]).to(start_prompts.dtype)
+        image = generate_image_from_tensors(interp_latents, interp_prompts, seed=0)
+        
+        new_node_id = str(uuid.uuid4())
+        # Save assets...
+        image_path = os.path.join(IMAGES_DIR, f"{new_node_id}.png")
+        latent_path = os.path.join(TENSORS_DIR, f"{new_node_id}_latent.pt")
+        prompt_embed_path = os.path.join(TENSORS_DIR, f"{new_node_id}_prompt_embed.pt")
+        node_meta_path = os.path.join(NODES_DIR, f"{new_node_id}.json")
+        image.save(image_path)
+        torch.save(interp_latents, latent_path)
+        torch.save(interp_prompts, prompt_embed_path)
+        
+        art_node = { "id": new_node_id, "image_path": f"/images/{new_node_id}.png", "latent_path": latent_path, "prompt_embed_path": prompt_embed_path, "model_info": { "name": MODEL_NAME, "lora": LORA_NAME, "pipeline": PIPELINE }, "prompt_text": f"In-place interpolation of {start_node_id[:4]}", "seed": None, "created_at": datetime.utcnow().isoformat(), "parent_nodes": [start_node_id, end_node_id], "interp_alpha": alpha, "rating": 'good' }
+        with open(node_meta_path, 'w') as f:
+            json.dump(art_node, f, indent=2)
+        newly_created_node_ids.append(new_node_id)
+    
+    # --- Linked-List Surgery ---
+    if not newly_created_node_ids:
+        return jsonify({"message": "No nodes to insert (steps <= 2)."}), 200
+
+    # Chain the new nodes together
+    for i, node_id in enumerate(newly_created_node_ids):
+        prev_node = newly_created_node_ids[i-1] if i > 0 else start_node_id
+        next_node = newly_created_node_ids[i+1] if i < len(newly_created_node_ids) - 1 else end_node_id
+        timeline['nodes'][node_id] = {"prev": prev_node, "next": next_node}
+    
+    # Update the original start and end nodes to point to the new chain
+    timeline['nodes'][start_node_id]['next'] = newly_created_node_ids[0]
+    timeline['nodes'][end_node_id]['prev'] = newly_created_node_ids[-1]
+
+    # --- Save and Respond ---
     with open(timeline_path, 'w') as f:
         json.dump(timeline, f, indent=2)
 
@@ -686,6 +759,42 @@ def delete_timeline(timeline_id):
     except Exception as e:
         return jsonify({"error": f"Failed to delete timeline: {str(e)}"}), 500
 
+@app.route('/v1/timelines/<timeline_id>/reverse', methods=['POST'])
+def reverse_timeline(timeline_id):
+    timeline_path = os.path.join(TIMELINES_DIR, f"{timeline_id}.json")
+    if not os.path.exists(timeline_path):
+        return jsonify({"error": "Timeline not found"}), 404
+
+    with open(timeline_path, 'r') as f:
+        timeline = json.load(f)
+
+    # Find the current last node, which will be the new start node
+    current_node_id = timeline.get('start_node_id')
+    if not current_node_id:
+        return jsonify(timeline) # Nothing to reverse
+
+    last_node_id = None
+    while current_node_id:
+        last_node_id = current_node_id
+        node_data = timeline['nodes'].get(current_node_id)
+        if not node_data:
+            break # Should not happen in a consistent timeline
+        current_node_id = node_data.get('next')
+
+    # Reverse the prev/next pointers for all nodes
+    for node_id, links in timeline['nodes'].items():
+        links['prev'], links['next'] = links.get('next'), links.get('prev')
+
+    # Update the start_node_id to the old last node
+    timeline['start_node_id'] = last_node_id
+
+    # Save the modified timeline
+    with open(timeline_path, 'w') as f:
+        json.dump(timeline, f, indent=2)
+
+    return jsonify(timeline)
+
 if __name__ == '__main__':
     # Start the Flask app
     app.run(host='0.0.0.0', port=5001)
+

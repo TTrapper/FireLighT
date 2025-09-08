@@ -39,7 +39,7 @@
 
     <!-- Header -->
     <header class="bg-gray-800 p-4 flex justify-between items-center shadow-md z-10 flex-shrink-0">
-        <h1 class="text-2xl font-bold text-gray-100">ArtEngine</h1>
+        <h1 class="text-2xl font-bold text-gray-100">FTL Art Studio</h1>
         <div class="flex items-center space-x-4">
             <button id="generate-view-btn" class="px-4 py-2 bg-blue-600 rounded-md hover:bg-blue-700 transition-colors">Generate</button>
             <button id="studio-view-btn" class="px-4 py-2 bg-gray-600 rounded-md hover:bg-gray-700 transition-colors">Studio</button>
@@ -56,7 +56,7 @@
 
         <!-- Generate View -->
         <div id="generate-view" class="hidden h-full flex flex-col items-center justify-center p-4">
-            
+
             <!-- This container holds the image and rating buttons -->
             <div id="generator-card-container" class="hidden">
                 <div id="generator-card" class="w-full max-w-xl aspect-square bg-gray-800 rounded-xl shadow-2xl flex flex-col items-center justify-center relative overflow-hidden">
@@ -100,8 +100,8 @@
                     </label>
                     <div class="flex items-center">
                         <label for="steps-slider" class="mr-2 text-sm text-gray-400">Steps:</label>
-                        <input id="steps-slider" type="range" min="2" max="120" value="30" class="w-32 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
-                        <span id="steps-value" class="ml-2 w-8 text-center text-sm">30</span>
+                        <input id="steps-slider" type="range" min="3" max="120" value="10" class="w-32 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                        <span id="steps-value" class="ml-2 w-8 text-center text-sm">10</span>
                     </div>
                     <button id="interpolate-btn" disabled class="px-4 py-2 bg-purple-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-700 transition-colors">Interpolate (2)</button>
                     <button id="link-selected-btn" disabled class="px-4 py-2 bg-green-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700 transition-colors">Link Selected (2)</button>
@@ -147,6 +147,7 @@
             unratedNodes: [],
             timelines: [],
             selectedNodes: [],
+            selectedTimelineNodes: new Map(), // timelineId -> [nodeId1, nodeId2]
             currentView: 'generate',
             timelinedNodeIds: new Set(),
             hideTimelined: false
@@ -176,7 +177,7 @@
         const gifSpeedSlider = document.getElementById('gif-speed-slider');
         const gifSpeedValue = document.getElementById('gif-speed-value');
         const gifViewTitle = document.getElementById('gif-view-title');
-        
+
         // --- GIF View State ---
         let gifAnimationInterval;
         let gifCurrentFrameIndex = 0;
@@ -196,7 +197,7 @@
                 console.error("Error fetching nodes:", error);
             }
         }
-        
+
         async function fetchTimelines() {
             try {
                 const response = await fetch(`${API_URL}/v1/timelines`);
@@ -219,9 +220,8 @@
             studioView.style.display = 'none';
 
             await Promise.all([fetchNodes(), fetchTimelines()]);
-            
+
             loadingView.style.display = 'none';
-            // After fetching, render the current view
             if (app.currentView === 'studio') {
                 renderStudio();
                 studioView.style.display = 'flex';
@@ -237,22 +237,21 @@
         function renderGenerator() {
             const cardContainer = document.getElementById('generator-card-container');
             const idleView = document.getElementById('generator-idle-view');
-            
+
             if (app.unratedNodes.length > 0) {
                 cardContainer.classList.remove('hidden');
                 idleView.classList.add('hidden');
-                
+
                 const imgEl = document.getElementById('generated-image');
                 const loaderEl = document.getElementById('generator-loader');
                 const ratingButtons = document.getElementById('rating-buttons');
 
                 const currentNode = app.unratedNodes[0];
-                
-                // Show loader, hide image and buttons until loaded
+
                 imgEl.classList.add('hidden');
                 loaderEl.classList.remove('hidden');
                 ratingButtons.classList.add('hidden');
-                
+
                 imgEl.onload = () => {
                     imgEl.classList.remove('hidden');
                     loaderEl.classList.add('hidden');
@@ -261,7 +260,7 @@
                 imgEl.onerror = () => {
                     loaderEl.querySelector('p').textContent = 'Error loading image.';
                 }
-                
+
                 imgEl.src = `${API_URL}${currentNode.image_path}`;
                 imagePromptOverlay.textContent = currentNode.prompt_text;
             } else {
@@ -269,7 +268,7 @@
                 idleView.classList.remove('hidden');
             }
         }
-        
+
         function getOrderedNodes(timeline) {
             const nodeMap = new Map(Object.entries(timeline.nodes));
             const orderedNodes = [];
@@ -288,10 +287,28 @@
         function createTimelineElement(timeline) {
             const timelineDiv = document.createElement('div');
             timelineDiv.className = 'bg-gray-700 p-3 rounded-lg shadow-md mb-4';
+            timelineDiv.dataset.timelineId = timeline.id; // Add identifier for scroll saving
+
+            const interpolateBtnId = `interp-btn-${timeline.id}`;
+            const selectedNodes = app.selectedTimelineNodes.get(timeline.id) || [];
+            let isConsecutive = false;
+            if (selectedNodes.length === 2) {
+                const node1 = timeline.nodes[selectedNodes[0]];
+                if (node1 && node1.next === selectedNodes[1]) {
+                    isConsecutive = true;
+                }
+            }
+
             timelineDiv.innerHTML = `
                 <div class="flex justify-between items-center mb-2">
-                    <h4 class="text-md font-semibold">${timeline.name} <span class="text-gray-400 text-sm">(${timeline.id.substring(0, 8)})</span></h4>
+                    <h4 class="text-md font-semibold">${timeline.name} <span class="text-gray-400 text-sm">(${Object.keys(timeline.nodes).length} nodes)</span></h4>
                     <div class="flex items-center space-x-2">
+                        <button id="${interpolateBtnId}" ${!isConsecutive ? 'disabled' : ''} class="px-3 py-1 text-xs bg-purple-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-700 transition-colors">Interpolate (2)</button>
+                        <button onclick="handleReverseTimeline('${timeline.id}')" class="text-gray-400 hover:text-white transition-colors" title="Reverse Timeline">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                            </svg>
+                        </button>
                         <button onclick="handleCopyTimeline('${timeline.id}')" class="text-gray-400 hover:text-white transition-colors" title="Copy Timeline">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" /></svg>
                         </button>
@@ -312,17 +329,25 @@
             `;
             const filmstrip = timelineDiv.querySelector('.timeline-filmstrip');
             const toggleBtn = timelineDiv.querySelector('.timeline-toggle-btn');
+            const inPlaceInterpBtn = timelineDiv.querySelector(`#${interpolateBtnId}`);
+
             toggleBtn.onclick = () => toggleTimeline(toggleBtn);
+            if(isConsecutive) {
+                inPlaceInterpBtn.onclick = () => handleInterpolateInTimeline(timeline.id);
+            }
 
             const orderedNodeIds = getOrderedNodes(timeline);
             orderedNodeIds.forEach(nodeId => {
                 const node = app.nodes.find(n => n.id === nodeId);
                 if (node) {
                     const imgContainer = document.createElement('div');
-                    imgContainer.className = 'flex-shrink-0 w-20 h-20 rounded-md overflow-hidden border border-gray-600';
+                    const isSelected = selectedNodes.includes(nodeId);
+                    imgContainer.className = `flex-shrink-0 w-20 h-20 rounded-md overflow-hidden border-2 cursor-pointer transition-all ${isSelected ? 'border-purple-500 ring-2 ring-purple-500' : 'border-gray-600'}`;
+                    imgContainer.onclick = (e) => handleTimelineNodeSelection(timeline.id, nodeId, e);
+
                     const img = document.createElement('img');
                     img.src = `${API_URL}${node.image_path}`;
-                    img.className = 'w-full h-full object-cover';
+                    img.className = 'w-full h-full object-cover pointer-events-none';
                     imgContainer.appendChild(img);
                     filmstrip.appendChild(imgContainer);
                 } else {
@@ -336,7 +361,7 @@
             const contentDiv = button.closest('.bg-gray-700').querySelector('.timeline-content');
             const svgIcon = button.querySelector('svg');
             const isExpanded = button.dataset.expanded === 'true';
-            
+
             if (isExpanded) {
                 contentDiv.classList.add('hidden');
                 svgIcon.style.transform = 'rotate(180deg)';
@@ -350,8 +375,8 @@
 
         function renderStudio() {
             const grid = document.getElementById('studio-grid');
-            grid.innerHTML = ''; 
-            
+            grid.innerHTML = '';
+
             let nodesToDisplay = app.nodes.filter(n => n.rating === 'good');
 
             if (app.hideTimelined) {
@@ -372,9 +397,9 @@
                 const img = document.createElement('img');
                 img.src = `${API_URL}${node.image_path}`;
                 img.className = 'w-full h-full object-cover';
-                img.loading = 'lazy'; // Improve performance
+                img.loading = 'lazy';
                 div.appendChild(img);
-                
+
                 const overlay = document.createElement('div');
                 overlay.className = 'absolute bottom-0 left-0 right-0 p-2 bg-black bg-opacity-60 text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none truncate';
                 overlay.textContent = node.prompt_text;
@@ -384,19 +409,38 @@
             });
 
             const timelinesContainer = document.getElementById('timelines-container');
-            const existingContent = [...timelinesContainer.querySelectorAll('.bg-gray-700')];
-            existingContent.forEach(el => el.remove());
+
+            // --- Save Scroll Positions ---
+            const mainScrollTop = timelinesContainer.scrollTop;
+            const filmstripScrolls = new Map();
+            timelinesContainer.querySelectorAll('.timeline-filmstrip').forEach(fs => {
+                const id = fs.closest('[data-timeline-id]')?.dataset.timelineId;
+                if (id) {
+                    filmstripScrolls.set(id, fs.scrollLeft);
+                }
+            });
+
+            timelinesContainer.innerHTML = '<h3 class="text-lg font-semibold mb-3 sticky top-0 bg-gray-800/50 py-2">Timelines</h3>';
 
             app.timelines.forEach(timeline => {
                 const timelineElement = createTimelineElement(timeline);
                 timelinesContainer.appendChild(timelineElement);
             });
 
+            // --- Restore Scroll Positions ---
+            timelinesContainer.scrollTop = mainScrollTop;
+            filmstripScrolls.forEach((scrollLeft, id) => {
+                const newFilmstrip = timelinesContainer.querySelector(`[data-timeline-id="${id}"] .timeline-filmstrip`);
+                if (newFilmstrip) {
+                    newFilmstrip.scrollLeft = scrollLeft;
+                }
+            });
+
             updateStudioActions();
         }
 
         // --- Event Handlers & Actions ---
-        
+
         window.switchView = function(view) {
             app.currentView = view;
             if (view === 'studio') {
@@ -425,7 +469,7 @@
                     body: JSON.stringify({ rating })
                 });
                 if (!response.ok) throw new Error(`Failed to rate image: ${response.statusText}`);
-                
+
                 const ratedNode = app.nodes.find(n => n.id === currentNode.id);
                 if (ratedNode) {
                     ratedNode.rating = rating;
@@ -438,17 +482,47 @@
                 console.error("Rating error:", error);
             }
         }
-        
+
         function handleNodeSelection(nodeId) {
+            app.selectedTimelineNodes.clear(); // Clear timeline selections when using main grid
             const index = app.selectedNodes.indexOf(nodeId);
             if (index > -1) {
                 app.selectedNodes.splice(index, 1);
             } else {
                 app.selectedNodes.push(nodeId);
             }
-            renderStudio(); 
+            renderStudio();
         }
-        
+
+        window.handleTimelineNodeSelection = function(timelineId, nodeId, event) {
+            event.stopPropagation();
+            app.selectedNodes = []; // Clear main grid selection
+
+            // Clear selections from other timelines
+            for (const id of app.selectedTimelineNodes.keys()) {
+                if (id !== timelineId) {
+                    app.selectedTimelineNodes.delete(id);
+                }
+            }
+
+            let selected = app.selectedTimelineNodes.get(timelineId) || [];
+            const nodeIndex = selected.indexOf(nodeId);
+
+            if (nodeIndex > -1) {
+                selected.splice(nodeIndex, 1); // Deselect
+            } else {
+                if (selected.length < 2) {
+                    selected.push(nodeId); // Select
+                } else {
+                    // If more than 2 are selected, start a new selection
+                    selected = [nodeId];
+                }
+            }
+
+            app.selectedTimelineNodes.set(timelineId, selected);
+            renderStudio(); // Re-render to update highlights and button states
+        }
+
         function updateStudioActions() {
             const hasTwo = app.selectedNodes.length === 2;
             const hasAtLeastTwo = app.selectedNodes.length >= 2;
@@ -457,10 +531,10 @@
             linkSelectedBtn.disabled = !hasTwo;
             createTimelineBtn.disabled = !hasAtLeastTwo;
         }
-        
+
         async function handleInterpolate() {
             if (app.selectedNodes.length !== 2) return;
-            
+
             const steps = stepsSlider.value;
             interpolateBtn.textContent = 'Interpolating...';
             interpolateBtn.disabled = true;
@@ -478,7 +552,7 @@
                 if (!response.ok) throw new Error("Interpolation failed");
 
                 app.selectedNodes = [];
-                await fetchAllData(); 
+                await fetchAllData();
             } catch (error) {
                 console.error("Interpolation error:", error);
             } finally {
@@ -486,7 +560,54 @@
                 updateStudioActions();
             }
         }
-        
+
+        window.handleInterpolateInTimeline = async function(timelineId) {
+            const selectedNodes = app.selectedTimelineNodes.get(timelineId);
+            if (!selectedNodes || selectedNodes.length !== 2) return;
+
+            // Ensure order is correct
+            const timeline = app.timelines.find(t => t.id === timelineId);
+            let startNodeId, endNodeId;
+            if (timeline.nodes[selectedNodes[0]].next === selectedNodes[1]) {
+                [startNodeId, endNodeId] = selectedNodes;
+            } else if (timeline.nodes[selectedNodes[1]].next === selectedNodes[0]) {
+                [endNodeId, startNodeId] = selectedNodes;
+            } else {
+                console.error("Selected timeline nodes are not consecutive.");
+                return;
+            }
+
+            const steps = parseInt(stepsSlider.value);
+            const interpBtn = document.getElementById(`interp-btn-${timelineId}`);
+            interpBtn.textContent = '...';
+            interpBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_URL}/v1/timelines/${timelineId}/interpolate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        start_node_id: startNodeId,
+                        end_node_id: endNodeId,
+                        steps: steps
+                    })
+                });
+                 if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error || "In-place interpolation failed");
+                }
+
+                app.selectedTimelineNodes.delete(timelineId);
+                await fetchAllData();
+
+            } catch(error) {
+                console.error("In-place interpolation error:", error);
+                alert(`Error: ${error.message}`);
+            } finally {
+                // The button will be re-rendered, no need to reset its state here
+            }
+        }
+
         window.handleCopyTimeline = async function(timelineId) {
             try {
                 const response = await fetch(`${API_URL}/v1/timelines/${timelineId}/copy`, {
@@ -510,6 +631,18 @@
                 await fetchAllData();
             } catch (error) {
                 console.error("Delete timeline error:", error);
+            }
+        }
+
+        window.handleReverseTimeline = async function(timelineId) {
+            try {
+                const response = await fetch(`${API_URL}/v1/timelines/${timelineId}/reverse`, {
+                    method: 'POST',
+                });
+                if (!response.ok) throw new Error("Failed to reverse timeline");
+                await fetchAllData(); // Refresh data to show the reversed timeline
+            } catch (error) {
+                console.error("Reverse timeline error:", error);
             }
         }
 
@@ -543,26 +676,26 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        name: `Custom Timeline (${app.selectedNodes.length} nodes)`,
+                        name: `Custom Timeline`,
                         node_ids: app.selectedNodes
                     })
                 });
                 if (!response.ok) throw new Error("Failed to create custom timeline");
-                app.selectedNodes = []; 
+                app.selectedNodes = [];
                 await fetchAllData();
             } catch (error) {
                 console.error("Create custom timeline error:", error);
             }
         }
-        
+
         async function handleGenerate() {
             const count = document.getElementById('generate-count-input').value;
             const feedbackEl = document.getElementById('generate-feedback');
-            
+
             generateTriggerBtn.disabled = true;
             generateTriggerBtn.textContent = 'Generating...'
             feedbackEl.textContent = `Requesting ${count} images...`;
-            
+
             try {
                  const response = await fetch(`${API_URL}/v1/generate`, {
                     method: 'POST',
@@ -596,7 +729,7 @@
                 .map(nodeId => app.nodes.find(n => n.id === nodeId))
                 .filter(Boolean) // Filter out any nodes not found
                 .map(node => `${API_URL}${node.image_path}`);
-            
+
             if (gifTimelineImages.length === 0) {
                 alert("No images found for this timeline.");
                 return;
@@ -636,7 +769,7 @@
                 stopGifAnimation();
                 return;
             }
-            
+
             // Ping-pong logic
             gifCurrentFrameIndex += gifAnimationDirection;
 
@@ -651,7 +784,7 @@
 
 
         // --- Initial Setup & Event Listeners ---
-        
+
         generateBtn.onclick = () => switchView('generate');
         studioBtn.onclick = () => switchView('studio');
         refreshNodesBtn.onclick = fetchAllData;
@@ -663,7 +796,7 @@
         stepsSlider.oninput = () => {
             stepsValue.textContent = stepsSlider.value;
         };
-        
+
         hideTimelinedCheckbox.onchange = () => {
             app.hideTimelined = hideTimelinedCheckbox.checked;
             renderStudio();
@@ -695,4 +828,7 @@
     </script>
 </body>
 </html>
+
+
+
 
