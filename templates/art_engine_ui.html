@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArtEngine UI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar for webkit browsers */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937; /* gray-800 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563; /* gray-600 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280; /* gray-500 */
+        }
+        .loader {
+            border: 4px solid #374151; /* gray-700 */
+            border-top: 4px solid #3b82f6; /* blue-500 */
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans antialiased h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-gray-800 p-4 flex justify-between items-center shadow-md z-10 flex-shrink-0">
+        <h1 class="text-2xl font-bold text-gray-100">ArtEngine</h1>
+        <div class="flex items-center space-x-4">
+            <button id="generate-view-btn" class="px-4 py-2 bg-blue-600 rounded-md hover:bg-blue-700 transition-colors">Generate</button>
+            <button id="studio-view-btn" class="px-4 py-2 bg-gray-600 rounded-md hover:bg-gray-700 transition-colors">Studio</button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow overflow-hidden">
+        <!-- Loading View -->
+        <div id="loading-view" class="h-full flex flex-col items-center justify-center">
+            <div class="loader"></div>
+            <p class="mt-4 text-gray-400">Loading ArtEngine...</p>
+        </div>
+
+        <!-- Generate View -->
+        <div id="generate-view" class="hidden h-full flex flex-col items-center justify-center p-4">
+            
+            <!-- This container holds the image and rating buttons -->
+            <div id="generator-card-container" class="hidden">
+                <div id="generator-card" class="w-full max-w-xl aspect-square bg-gray-800 rounded-xl shadow-2xl flex flex-col items-center justify-center relative overflow-hidden">
+                    <div id="generator-loader" class="text-center">
+                        <div class="loader mx-auto"></div>
+                        <p class="mt-4 text-gray-400">Loading Image...</p>
+                    </div>
+                    <img id="generated-image" src="" class="hidden w-full h-full object-contain" alt="Generated Art">
+                    <div id="image-prompt-overlay" class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 p-4 text-center text-sm text-gray-300 backdrop-blur-sm opacity-0 transition-opacity duration-300 pointer-events-none">
+                        Prompt Placeholder
+                    </div>
+                </div>
+                 <div id="rating-buttons" class="mt-6 flex space-x-4 hidden">
+                    <button onclick="rateCurrentImage('bad')" class="px-8 py-3 bg-red-600 rounded-lg text-xl font-semibold hover:bg-red-700 transform hover:scale-105 transition-all">Bad</button>
+                    <button onclick="rateCurrentImage('meh')" class="px-8 py-3 bg-yellow-600 rounded-lg text-xl font-semibold hover:bg-yellow-700 transform hover:scale-105 transition-all">Meh</button>
+                    <button onclick="rateCurrentImage('good')" class="px-8 py-3 bg-green-600 rounded-lg text-xl font-semibold hover:bg-green-700 transform hover:scale-105 transition-all">Good</button>
+                </div>
+            </div>
+
+            <!-- This view is shown when there are no images to rate -->
+            <div id="generator-idle-view" class="hidden text-center">
+                <p class="text-gray-400 mb-4">No unrated images. Generate some new ones!</p>
+                <div class="flex justify-center items-center space-x-2">
+                    <input id="generate-count-input" type="number" value="5" min="1" max="100" class="w-24 bg-gray-700 text-white rounded-md p-2 text-center">
+                    <button id="generate-trigger-btn" class="px-6 py-2 bg-blue-600 rounded-md hover:bg-blue-700 transition-colors">Generate</button>
+                </div>
+                <p id="generate-feedback" class="text-sm text-gray-500 mt-2 h-4"></p>
+                <button id="refresh-nodes-btn" class="mt-4 px-4 py-2 bg-gray-600 rounded-md hover:bg-gray-700">Refresh Unrated</button>
+            </div>
+        </div>
+
+        <!-- Studio View -->
+        <div id="studio-view" class="hidden h-full flex flex-col p-4">
+            <div class="flex-shrink-0 flex justify-between items-center mb-4 px-4">
+                <h2 class="text-xl font-semibold">Studio Canvas</h2>
+                <div class="flex items-center space-x-3">
+                     <div class="flex items-center">
+                        <label for="steps-slider" class="mr-2 text-sm text-gray-400">Steps:</label>
+                        <input id="steps-slider" type="range" min="2" max="120" value="30" class="w-32 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                        <span id="steps-value" class="ml-2 w-8 text-center text-sm">30</span>
+                    </div>
+                    <button id="interpolate-btn" disabled class="px-4 py-2 bg-purple-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-700 transition-colors">Interpolate (2)</button>
+                    <button id="link-selected-btn" disabled class="px-4 py-2 bg-green-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700 transition-colors">Link Selected (2)</button>
+                    <button id="create-timeline-btn" disabled class="px-4 py-2 bg-indigo-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-700 transition-colors">Create Timeline</button>
+                </div>
+            </div>
+            <div class="flex flex-grow overflow-hidden space-x-4">
+                <div id="studio-grid" class="flex-grow overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4 p-4 bg-gray-800/50 rounded-lg min-w-0 auto-rows-min">
+                    <!-- Images will be populated here -->
+                </div>
+                <div id="timelines-container" class="w-1/3 overflow-y-auto p-4 bg-gray-800/50 rounded-lg flex-shrink-0">
+                    <h3 class="text-lg font-semibold mb-3 sticky top-0 bg-gray-800/50 py-2">Timelines</h3>
+                    <!-- Timelines will be populated here -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- GIF View Modal -->
+    <div id="gif-view-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden">
+        <div class="bg-gray-800 p-6 rounded-lg shadow-xl max-w-4xl w-full relative">
+            <button onclick="closeGifView()" class="absolute top-3 right-3 text-gray-400 hover:text-white text-2xl z-10">&times;</button>
+            <h3 id="gif-view-title" class="text-xl font-bold mb-4 text-center">Timeline GIF View</h3>
+            <div class="flex flex-col items-center">
+                <img id="gif-view-image" src="" class="max-w-full h-auto max-h-[70vh] object-contain rounded-md border border-gray-700" alt="Timeline Animation">
+                <div class="flex items-center space-x-4 mt-4">
+                    <button id="gif-play-pause-btn" class="px-4 py-2 bg-blue-600 rounded-md hover:bg-blue-700 transition-colors w-20">Play</button>
+                    <input type="range" id="gif-speed-slider" min="50" max="2000" value="200" class="w-48 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                    <span id="gif-speed-value" class="text-sm w-12 text-center">200ms</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const API_URL = "http://127.0.0.1:5001";
+
+        // --- App State ---
+        const app = {
+            nodes: [],
+            unratedNodes: [],
+            timelines: [],
+            selectedNodes: [],
+            currentView: 'generate'
+        };
+
+        // --- DOM Elements ---
+        const generateView = document.getElementById('generate-view');
+        const studioView = document.getElementById('studio-view');
+        const loadingView = document.getElementById('loading-view');
+        const generateBtn = document.getElementById('generate-view-btn');
+        const studioBtn = document.getElementById('studio-view-btn');
+        const refreshNodesBtn = document.getElementById('refresh-nodes-btn');
+        const generateTriggerBtn = document.getElementById('generate-trigger-btn');
+        const interpolateBtn = document.getElementById('interpolate-btn');
+        const linkSelectedBtn = document.getElementById('link-selected-btn');
+        const createTimelineBtn = document.getElementById('create-timeline-btn');
+        const stepsSlider = document.getElementById('steps-slider');
+        const stepsValue = document.getElementById('steps-value');
+        const generatorCard = document.getElementById('generator-card');
+        const imagePromptOverlay = document.getElementById('image-prompt-overlay');
+
+        // GIF View Elements
+        const gifViewModal = document.getElementById('gif-view-modal');
+        const gifViewImage = document.getElementById('gif-view-image');
+        const gifPlayPauseBtn = document.getElementById('gif-play-pause-btn');
+        const gifSpeedSlider = document.getElementById('gif-speed-slider');
+        const gifSpeedValue = document.getElementById('gif-speed-value');
+        const gifViewTitle = document.getElementById('gif-view-title');
+        
+        // --- GIF View State ---
+        let gifAnimationInterval;
+        let gifCurrentFrameIndex = 0;
+        let gifAnimationDirection = 1;
+        let gifTimelineImages = [];
+
+        // --- Core Functions ---
+
+        async function fetchNodes() {
+            try {
+                const response = await fetch(`${API_URL}/v1/nodes`);
+                if (!response.ok) throw new Error("Failed to fetch nodes");
+                app.nodes = await response.json();
+                app.unratedNodes = app.nodes.filter(n => n.rating === null);
+                console.log(`Fetched ${app.nodes.length} total nodes, ${app.unratedNodes.length} are unrated.`);
+            } catch (error) {
+                console.error("Error fetching nodes:", error);
+            }
+        }
+        
+        async function fetchTimelines() {
+            try {
+                const response = await fetch(`${API_URL}/v1/timelines`);
+                 if (!response.ok) throw new Error("Failed to fetch timelines");
+                app.timelines = await response.json();
+                console.log(`Fetched ${app.timelines.length} timelines.`);
+            } catch (error) {
+                console.error("Error fetching timelines:", error);
+            }
+        }
+
+        async function fetchAllData() {
+            loadingView.style.display = 'flex';
+            generateView.style.display = 'none';
+            studioView.style.display = 'none';
+
+            await Promise.all([fetchNodes(), fetchTimelines()]);
+            
+            loadingView.style.display = 'none';
+            // After fetching, render the current view
+            if (app.currentView === 'studio') {
+                renderStudio();
+                studioView.style.display = 'flex';
+            } else {
+                renderGenerator();
+                generateView.style.display = 'flex';
+            }
+        }
+
+
+        // --- View Rendering ---
+
+        function renderGenerator() {
+            const cardContainer = document.getElementById('generator-card-container');
+            const idleView = document.getElementById('generator-idle-view');
+            
+            if (app.unratedNodes.length > 0) {
+                cardContainer.classList.remove('hidden');
+                idleView.classList.add('hidden');
+                
+                const imgEl = document.getElementById('generated-image');
+                const loaderEl = document.getElementById('generator-loader');
+                const ratingButtons = document.getElementById('rating-buttons');
+
+                const currentNode = app.unratedNodes[0];
+                
+                // Show loader, hide image and buttons until loaded
+                imgEl.classList.add('hidden');
+                loaderEl.classList.remove('hidden');
+                ratingButtons.classList.add('hidden');
+                
+                imgEl.onload = () => {
+                    imgEl.classList.remove('hidden');
+                    loaderEl.classList.add('hidden');
+                    ratingButtons.classList.remove('hidden');
+                };
+                imgEl.onerror = () => {
+                    loaderEl.querySelector('p').textContent = 'Error loading image.';
+                }
+                
+                imgEl.src = `${API_URL}${currentNode.image_path}`;
+                imagePromptOverlay.textContent = currentNode.prompt_text;
+            } else {
+                cardContainer.classList.add('hidden');
+                idleView.classList.remove('hidden');
+            }
+        }
+        
+        function getOrderedNodes(timeline) {
+            const nodeMap = new Map(Object.entries(timeline.nodes));
+            const orderedNodes = [];
+            let currentNodeId = timeline.start_node_id;
+            const visited = new Set();
+
+            while (currentNodeId && !visited.has(currentNodeId)) {
+                visited.add(currentNodeId);
+                orderedNodes.push(currentNodeId);
+                const node = nodeMap.get(currentNodeId);
+                currentNodeId = node ? node.next : null;
+            }
+            return orderedNodes;
+        }
+
+        function createTimelineElement(timeline) {
+            const timelineDiv = document.createElement('div');
+            timelineDiv.className = 'bg-gray-700 p-3 rounded-lg shadow-md mb-4';
+            timelineDiv.innerHTML = `
+                <div class="flex justify-between items-center mb-2">
+                    <h4 class="text-md font-semibold">${timeline.name} <span class="text-gray-400 text-sm">(${timeline.id.substring(0, 8)})</span></h4>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="handleCopyTimeline('${timeline.id}')" class="text-gray-400 hover:text-white transition-colors" title="Copy Timeline">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" /></svg>
+                        </button>
+                        <button onclick="openGifView('${timeline.id}')" class="text-gray-400 hover:text-white transition-colors" title="Open GIF View">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.176 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.92 8.73c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z" clip-rule="evenodd" /></svg>
+                        </button>
+                        <button class="text-gray-400 hover:text-white transition-colors timeline-toggle-btn" data-expanded="true" title="Toggle Timeline View">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 transform" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="timeline-content">
+                    <div class="flex overflow-x-auto space-x-2 pb-2 timeline-filmstrip"></div>
+                </div>
+            `;
+            const filmstrip = timelineDiv.querySelector('.timeline-filmstrip');
+            const toggleBtn = timelineDiv.querySelector('.timeline-toggle-btn');
+            toggleBtn.onclick = () => toggleTimeline(toggleBtn);
+
+            const orderedNodeIds = getOrderedNodes(timeline);
+            orderedNodeIds.forEach(nodeId => {
+                const node = app.nodes.find(n => n.id === nodeId);
+                if (node) {
+                    const imgContainer = document.createElement('div');
+                    imgContainer.className = 'flex-shrink-0 w-20 h-20 rounded-md overflow-hidden border border-gray-600';
+                    const img = document.createElement('img');
+                    img.src = `${API_URL}${node.image_path}`;
+                    img.className = 'w-full h-full object-cover';
+                    imgContainer.appendChild(img);
+                    filmstrip.appendChild(imgContainer);
+                } else {
+                    console.warn("Node not found in app.nodes for ID:", nodeId);
+                }
+            });
+            return timelineDiv;
+        }
+
+        window.toggleTimeline = function(button) {
+            const contentDiv = button.closest('.bg-gray-700').querySelector('.timeline-content');
+            const svgIcon = button.querySelector('svg');
+            const isExpanded = button.dataset.expanded === 'true';
+            
+            if (isExpanded) {
+                contentDiv.classList.add('hidden');
+                svgIcon.style.transform = 'rotate(180deg)';
+                button.dataset.expanded = 'false';
+            } else {
+                contentDiv.classList.remove('hidden');
+                svgIcon.style.transform = 'rotate(0deg)';
+                button.dataset.expanded = 'true';
+            }
+        }
+
+        function renderStudio() {
+            const grid = document.getElementById('studio-grid');
+            grid.innerHTML = ''; 
+            
+            const ratedNodes = app.nodes.filter(n => n.rating === 'good');
+
+            ratedNodes.forEach(node => {
+                const div = document.createElement('div');
+                div.className = `relative aspect-square rounded-lg overflow-hidden cursor-pointer group border-2 border-transparent hover:border-blue-500 transition-all min-w-[120px]`;
+                div.dataset.nodeId = node.id;
+                div.onclick = () => handleNodeSelection(node.id);
+
+                if (app.selectedNodes.includes(node.id)) {
+                    div.classList.replace('border-transparent', 'border-blue-500');
+                    div.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2', 'ring-offset-gray-900');
+                }
+
+                const img = document.createElement('img');
+                img.src = `${API_URL}${node.image_path}`;
+                img.className = 'w-full h-full object-cover';
+                img.loading = 'lazy'; // Improve performance
+                div.appendChild(img);
+                
+                const overlay = document.createElement('div');
+                overlay.className = 'absolute bottom-0 left-0 right-0 p-2 bg-black bg-opacity-60 text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none truncate';
+                overlay.textContent = node.prompt_text;
+                div.appendChild(overlay);
+
+                grid.appendChild(div);
+            });
+
+            const timelinesContainer = document.getElementById('timelines-container');
+            const existingContent = [...timelinesContainer.querySelectorAll('.bg-gray-700')];
+            existingContent.forEach(el => el.remove());
+
+            app.timelines.forEach(timeline => {
+                const timelineElement = createTimelineElement(timeline);
+                timelinesContainer.appendChild(timelineElement);
+            });
+
+            updateStudioActions();
+        }
+
+        // --- Event Handlers & Actions ---
+        
+        window.switchView = function(view) {
+            app.currentView = view;
+            if (view === 'studio') {
+                generateView.style.display = 'none';
+                studioView.style.display = 'flex';
+                studioBtn.classList.replace('bg-gray-600', 'bg-blue-600');
+                generateBtn.classList.replace('bg-blue-600', 'bg-gray-600');
+                renderStudio();
+            } else {
+                studioView.style.display = 'none';
+                generateView.style.display = 'flex';
+                generateBtn.classList.replace('bg-gray-600', 'bg-blue-600');
+                studioBtn.classList.replace('bg-blue-600', 'bg-gray-600');
+                renderGenerator();
+            }
+        }
+
+        window.rateCurrentImage = async function(rating) {
+            if (!app.unratedNodes.length) return;
+            const currentNode = app.unratedNodes[0];
+
+            try {
+                const response = await fetch(`${API_URL}/v1/nodes/${currentNode.id}/rate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rating })
+                });
+                if (!response.ok) throw new Error(`Failed to rate image: ${response.statusText}`);
+                
+                const ratedNode = app.nodes.find(n => n.id === currentNode.id);
+                if (ratedNode) {
+                    ratedNode.rating = rating;
+                }
+
+                app.unratedNodes.shift();
+                renderGenerator();
+
+            } catch (error) {
+                console.error("Rating error:", error);
+            }
+        }
+        
+        function handleNodeSelection(nodeId) {
+            const index = app.selectedNodes.indexOf(nodeId);
+            if (index > -1) {
+                app.selectedNodes.splice(index, 1);
+            } else {
+                app.selectedNodes.push(nodeId);
+            }
+            renderStudio(); 
+        }
+        
+        function updateStudioActions() {
+            const hasTwo = app.selectedNodes.length === 2;
+            const hasAtLeastTwo = app.selectedNodes.length >= 2;
+
+            interpolateBtn.disabled = !hasTwo;
+            linkSelectedBtn.disabled = !hasTwo;
+            createTimelineBtn.disabled = !hasAtLeastTwo;
+        }
+        
+        async function handleInterpolate() {
+            if (app.selectedNodes.length !== 2) return;
+            
+            const steps = stepsSlider.value;
+            interpolateBtn.textContent = 'Interpolating...';
+            interpolateBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_URL}/v1/interpolate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        start_node_id: app.selectedNodes[0],
+                        end_node_id: app.selectedNodes[1],
+                        steps: parseInt(steps)
+                    })
+                });
+                if (!response.ok) throw new Error("Interpolation failed");
+
+                app.selectedNodes = [];
+                await fetchAllData(); 
+            } catch (error) {
+                console.error("Interpolation error:", error);
+            } finally {
+                interpolateBtn.textContent = `Interpolate (2)`;
+                updateStudioActions();
+            }
+        }
+        
+        window.handleCopyTimeline = async function(timelineId) {
+            try {
+                const response = await fetch(`${API_URL}/v1/timelines/${timelineId}/copy`, {
+                    method: 'POST',
+                });
+                if (!response.ok) throw new Error("Failed to copy timeline");
+                await fetchAllData();
+            } catch (error) {
+                console.error("Copy timeline error:", error);
+            }
+        }
+
+        async function handleLinkNodes() {
+            if (app.selectedNodes.length !== 2) return;
+
+            const [sourceNodeId, targetNodeId] = app.selectedNodes;
+
+            try {
+                const response = await fetch(`${API_URL}/v1/timelines`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: `Linked: ${sourceNodeId.substring(0, 4)} to ${targetNodeId.substring(0, 4)}`,
+                        node_ids: [sourceNodeId, targetNodeId]
+                    })
+                });
+                if (!response.ok) throw new Error("Failed to link nodes");
+                app.selectedNodes = [];
+                await fetchAllData();
+            } catch (error) {
+                console.error("Link nodes error:", error);
+            }
+        }
+
+        async function handleCreateTimeline() {
+            if (app.selectedNodes.length < 2) return;
+
+            try {
+                const response = await fetch(`${API_URL}/v1/timelines`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: `Custom Timeline (${app.selectedNodes.length} nodes)`,
+                        node_ids: app.selectedNodes
+                    })
+                });
+                if (!response.ok) throw new Error("Failed to create custom timeline");
+                app.selectedNodes = []; 
+                await fetchAllData();
+            } catch (error) {
+                console.error("Create custom timeline error:", error);
+            }
+        }
+        
+        async function handleGenerate() {
+            const count = document.getElementById('generate-count-input').value;
+            const feedbackEl = document.getElementById('generate-feedback');
+            
+            generateTriggerBtn.disabled = true;
+            generateTriggerBtn.textContent = 'Generating...'
+            feedbackEl.textContent = `Requesting ${count} images...`;
+            
+            try {
+                 const response = await fetch(`${API_URL}/v1/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ num_images: parseInt(count) })
+                });
+                if (!response.ok) throw new Error("Generation request failed");
+                feedbackEl.textContent = `Generation started! Refreshing...`;
+                setTimeout(fetchAllData, 1000); // Give backend a moment
+            } catch(error) {
+                console.error("Generate error:", error);
+                feedbackEl.textContent = 'Generation failed.';
+            } finally {
+                generateTriggerBtn.disabled = false;
+                generateTriggerBtn.textContent = 'Generate'
+                setTimeout(() => feedbackEl.textContent = '', 3000);
+            }
+        }
+
+        // --- GIF View Functions ---
+
+        window.openGifView = function(timelineId) {
+            const timeline = app.timelines.find(t => t.id === timelineId);
+            if (!timeline) {
+                console.error("Timeline not found:", timelineId);
+                return;
+            }
+
+            const orderedNodeIds = getOrderedNodes(timeline);
+            gifTimelineImages = orderedNodeIds
+                .map(nodeId => app.nodes.find(n => n.id === nodeId))
+                .filter(Boolean) // Filter out any nodes not found
+                .map(node => `${API_URL}${node.image_path}`);
+            
+            if (gifTimelineImages.length === 0) {
+                alert("No images found for this timeline.");
+                return;
+            }
+
+            gifViewTitle.textContent = `Timeline: ${timeline.name}`;
+            gifCurrentFrameIndex = 0;
+            gifAnimationDirection = 1;
+            gifPlayPauseBtn.textContent = 'Pause';
+            gifViewImage.src = gifTimelineImages[0]; // Load first image
+            gifViewModal.classList.remove('hidden');
+            startGifAnimation();
+        }
+
+        window.closeGifView = function() {
+            stopGifAnimation();
+            gifViewModal.classList.add('hidden');
+        }
+
+        function startGifAnimation() {
+            stopGifAnimation(); // Clear any existing interval
+            const speed = parseInt(gifSpeedSlider.value, 10);
+            if (gifTimelineImages.length > 1) {
+                 gifAnimationInterval = setInterval(updateGifFrame, speed);
+            }
+        }
+
+        function stopGifAnimation() {
+            if (gifAnimationInterval) {
+                clearInterval(gifAnimationInterval);
+                gifAnimationInterval = null;
+            }
+        }
+
+        function updateGifFrame() {
+            if (gifTimelineImages.length === 0) {
+                stopGifAnimation();
+                return;
+            }
+            
+            // Ping-pong logic
+            gifCurrentFrameIndex += gifAnimationDirection;
+
+            if (gifCurrentFrameIndex >= gifTimelineImages.length || gifCurrentFrameIndex < 0) {
+                gifAnimationDirection *= -1; // Reverse direction
+                gifCurrentFrameIndex += gifAnimationDirection * 2;
+                // Clamp index to stay within bounds, important for timelines with 2 frames
+                gifCurrentFrameIndex = Math.max(0, Math.min(gifTimelineImages.length - 1, gifCurrentFrameIndex));
+            }
+            gifViewImage.src = gifTimelineImages[gifCurrentFrameIndex];
+        }
+
+
+        // --- Initial Setup & Event Listeners ---
+        
+        generateBtn.onclick = () => switchView('generate');
+        studioBtn.onclick = () => switchView('studio');
+        refreshNodesBtn.onclick = fetchAllData;
+        generateTriggerBtn.onclick = handleGenerate;
+        interpolateBtn.onclick = handleInterpolate;
+        linkSelectedBtn.onclick = handleLinkNodes;
+        createTimelineBtn.onclick = handleCreateTimeline;
+
+        stepsSlider.oninput = () => {
+            stepsValue.textContent = stepsSlider.value;
+        };
+        
+        generatorCard.onmouseenter = () => imagePromptOverlay.classList.replace('opacity-0', 'opacity-100');
+        generatorCard.onmouseleave = () => imagePromptOverlay.classList.replace('opacity-100', 'opacity-0');
+
+        gifPlayPauseBtn.addEventListener('click', () => {
+            if (gifAnimationInterval) {
+                stopGifAnimation();
+                gifPlayPauseBtn.textContent = 'Play';
+            } else {
+                startGifAnimation();
+                gifPlayPauseBtn.textContent = 'Pause';
+            }
+        });
+
+        gifSpeedSlider.addEventListener('input', () => {
+            gifSpeedValue.textContent = `${gifSpeedSlider.value}ms`;
+            if (gifAnimationInterval) {
+                startGifAnimation(); // Restart animation with new speed
+            }
+        });
+
+        // --- Initial Load ---
+        fetchAllData();
+    });
+    </script>
+</body>
+</html>
