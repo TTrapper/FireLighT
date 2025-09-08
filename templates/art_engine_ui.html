@@ -92,8 +92,13 @@
         <div id="studio-view" class="hidden h-full flex flex-col p-4">
             <div class="flex-shrink-0 flex justify-between items-center mb-4 px-4">
                 <h2 class="text-xl font-semibold">Studio Canvas</h2>
-                <div class="flex items-center space-x-3">
-                     <div class="flex items-center">
+                <div class="flex items-center space-x-4">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" id="hide-timelined-images" class="sr-only peer">
+                        <div class="relative w-11 h-6 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        <span class="ms-3 text-sm font-medium text-gray-300">Hide Timelined Images</span>
+                    </label>
+                    <div class="flex items-center">
                         <label for="steps-slider" class="mr-2 text-sm text-gray-400">Steps:</label>
                         <input id="steps-slider" type="range" min="2" max="120" value="30" class="w-32 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
                         <span id="steps-value" class="ml-2 w-8 text-center text-sm">30</span>
@@ -142,7 +147,9 @@
             unratedNodes: [],
             timelines: [],
             selectedNodes: [],
-            currentView: 'generate'
+            currentView: 'generate',
+            timelinedNodeIds: new Set(),
+            hideTimelined: false
         };
 
         // --- DOM Elements ---
@@ -160,6 +167,7 @@
         const stepsValue = document.getElementById('steps-value');
         const generatorCard = document.getElementById('generator-card');
         const imagePromptOverlay = document.getElementById('image-prompt-overlay');
+        const hideTimelinedCheckbox = document.getElementById('hide-timelined-images');
 
         // GIF View Elements
         const gifViewModal = document.getElementById('gif-view-modal');
@@ -194,7 +202,12 @@
                 const response = await fetch(`${API_URL}/v1/timelines`);
                  if (!response.ok) throw new Error("Failed to fetch timelines");
                 app.timelines = await response.json();
-                console.log(`Fetched ${app.timelines.length} timelines.`);
+                app.timelinedNodeIds.clear(); // Clear previous IDs
+                app.timelines.forEach(timeline => {
+                    const orderedNodeIds = getOrderedNodes(timeline);
+                    orderedNodeIds.forEach(nodeId => app.timelinedNodeIds.add(nodeId));
+                });
+                console.log(`Fetched ${app.timelines.length} timelines. ${app.timelinedNodeIds.size} nodes are in timelines.`);
             } catch (error) {
                 console.error("Error fetching timelines:", error);
             }
@@ -339,9 +352,13 @@
             const grid = document.getElementById('studio-grid');
             grid.innerHTML = ''; 
             
-            const ratedNodes = app.nodes.filter(n => n.rating === 'good');
+            let nodesToDisplay = app.nodes.filter(n => n.rating === 'good');
 
-            ratedNodes.forEach(node => {
+            if (app.hideTimelined) {
+                nodesToDisplay = nodesToDisplay.filter(node => !app.timelinedNodeIds.has(node.id));
+            }
+
+            nodesToDisplay.forEach(node => {
                 const div = document.createElement('div');
                 div.className = `relative aspect-square rounded-lg overflow-hidden cursor-pointer group border-2 border-transparent hover:border-blue-500 transition-all min-w-[120px]`;
                 div.dataset.nodeId = node.id;
@@ -483,9 +500,8 @@
         }
 
         window.handleDeleteTimeline = async function(timelineId) {
-            if (!confirm("Are you sure you want to delete this timeline? This action cannot be undone.")) {
-                return;
-            }
+            // NOTE: Removed window.confirm to comply with environment restrictions.
+            // In a real app, a custom confirmation modal would be implemented here.
             try {
                 const response = await fetch(`${API_URL}/v1/timelines/${timelineId}`, {
                     method: 'DELETE',
@@ -648,6 +664,11 @@
             stepsValue.textContent = stepsSlider.value;
         };
         
+        hideTimelinedCheckbox.onchange = () => {
+            app.hideTimelined = hideTimelinedCheckbox.checked;
+            renderStudio();
+        };
+
         generatorCard.onmouseenter = () => imagePromptOverlay.classList.replace('opacity-0', 'opacity-100');
         generatorCard.onmouseleave = () => imagePromptOverlay.classList.replace('opacity-100', 'opacity-0');
 
@@ -674,3 +695,4 @@
     </script>
 </body>
 </html>
+
