@@ -43,7 +43,7 @@ pipe = InterpPipeline.from_pretrained(
 )
 pipe.load_lora_weights(LORA_NAME)
 pipe.fuse_lora() # Fuse LoRA weights for performance
-pipe.enable_model_cpu_offload()
+#pipe.enable_model_cpu_offload()
 pipe.safety_checker = None
 print("Model loaded.")
 
@@ -673,6 +673,18 @@ def copy_timeline(timeline_id):
         json.dump(new_timeline, f, indent=2)
 
     return jsonify(new_timeline), 201
+
+@app.route('/v1/timelines/<timeline_id>', methods=['DELETE'])
+def delete_timeline(timeline_id):
+    timeline_path = os.path.join(TIMELINES_DIR, f"{timeline_id}.json")
+    if not os.path.exists(timeline_path):
+        return jsonify({"error": "Timeline not found"}), 404
+    
+    try:
+        os.remove(timeline_path)
+        return jsonify({"message": "Timeline deleted successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to delete timeline: {str(e)}"}), 500
 
 if __name__ == '__main__':
     # Start the Flask app
