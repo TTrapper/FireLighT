@@ -467,9 +467,18 @@ def generate_n_images(count):
             print(f"Error during batch generation: {e}")
     print(f"Finished generating {count} images.")
 
-@app.route('/v1/generator/generate', methods=['POST'])
+
+
+# --- API Endpoints ---
+
+@app.route('/')
+def index():
+    """Serves the main UI."""
+    return render_template('art_engine_ui.html')
+
+@app.route('/v1/generate', methods=['POST'])
 def trigger_generation():
-    count = request.json.get('count', 1)
+    count = request.json.get('num_images', 1)
     if not isinstance(count, int) or count <= 0 or count > 100:
          return jsonify({"error": "Invalid 'count'. Must be an integer between 1 and 100."}), 400
 
@@ -480,16 +489,6 @@ def trigger_generation():
 
     return jsonify({"message": f"Started generating {count} images in the background."}), 202
 
-
-# --- API Endpoints ---
-
-@app.route('/')
-def index():
-    """Serves the main UI."""
-    return render_template('art_engine_ui.html')
-
-@app.route('/images/<path:filename>')
-# ... rest of your routes
 @app.route('/images/<path:filename>')
 def serve_image(filename):
     return send_from_directory(IMAGES_DIR, filename)
