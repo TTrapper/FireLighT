@@ -95,9 +95,9 @@
                 <h2 class="text-xl font-semibold">Studio Canvas</h2>
                 <div class="flex items-center space-x-4">
                     <label class="flex items-center cursor-pointer">
-                        <input type="checkbox" id="hide-timelined-images" class="sr-only peer">
+                        <input type="checkbox" id="hide-interpolated-images" class="sr-only peer">
                         <div class="relative w-11 h-6 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                        <span class="ms-3 text-sm font-medium text-gray-300">Hide Timelined Images</span>
+                        <span class="ms-3 text-sm font-medium text-gray-300">Hide Interpolated Images</span>
                     </label>
                     <div class="flex items-center">
                         <label for="steps-slider" class="mr-2 text-sm text-gray-400">Steps:</label>
@@ -177,7 +177,7 @@
             selectedTimelineNodes: new Map(), // timelineId -> [nodeId1, nodeId2]
             currentView: 'generate',
             timelinedNodeIds: new Set(),
-            hideTimelined: false,
+            hideInterpolated: false,
             promptData: null // New state for prompt data
         };
 
@@ -196,7 +196,7 @@
         const stepsValue = document.getElementById('steps-value');
         const generatorCard = document.getElementById('generator-card');
         const imagePromptOverlay = document.getElementById('image-prompt-overlay');
-        const hideTimelinedCheckbox = document.getElementById('hide-timelined-images');
+        const hideInterpolatedCheckbox = document.getElementById('hide-interpolated-images');
 
         // Prompt Data Elements
         const promptDataView = document.getElementById('prompt-data-view');
@@ -465,8 +465,8 @@
 
             let nodesToDisplay = app.nodes.filter(n => n.rating === 'good');
 
-            if (app.hideTimelined) {
-                nodesToDisplay = nodesToDisplay.filter(node => !app.timelinedNodeIds.has(node.id));
+            if (app.hideInterpolated) {
+                nodesToDisplay = nodesToDisplay.filter(node => !node.parent_nodes || node.parent_nodes.length === 0);
             }
 
             nodesToDisplay.forEach(node => {
@@ -914,8 +914,8 @@
             stepsValue.textContent = stepsSlider.value;
         };
 
-        hideTimelinedCheckbox.onchange = () => {
-            app.hideTimelined = hideTimelinedCheckbox.checked;
+        hideInterpolatedCheckbox.onchange = () => {
+            app.hideInterpolated = hideInterpolatedCheckbox.checked;
             renderStudio();
         };
 
