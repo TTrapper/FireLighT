@@ -43,6 +43,7 @@
         <div class="flex items-center space-x-4">
             <button id="generate-view-btn" class="px-4 py-2 bg-blue-600 rounded-md hover:bg-blue-700 transition-colors">Generate</button>
             <button id="studio-view-btn" class="px-4 py-2 bg-gray-600 rounded-md hover:bg-gray-700 transition-colors">Studio</button>
+            <button id="prompt-data-view-btn" class="px-4 py-2 bg-gray-600 rounded-md hover:bg-gray-700 transition-colors">Prompt Data</button>
         </div>
     </header>
 
@@ -118,6 +119,32 @@
                 </div>
             </div>
         </div>
+
+        <!-- Prompt Data View -->
+        <div id="prompt-data-view" class="hidden h-full flex flex-col p-4 overflow-y-auto">
+            <h2 class="text-xl font-semibold mb-4">Manage Prompt Data</h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 flex-grow">
+                <!-- Names Section -->
+                <div class="bg-gray-800/50 p-6 rounded-lg flex flex-col">
+                    <h3 class="text-lg font-semibold mb-3">Names</h3>
+                    <textarea id="names-textarea" class="flex-grow w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-sm resize-none focus:outline-none focus:border-blue-500"></textarea>
+                </div>
+
+                <!-- Art Styles Section -->
+                <div class="bg-gray-800/50 p-6 rounded-lg flex flex-col">
+                    <h3 class="text-lg font-semibold mb-3">Art Styles</h3>
+                    <textarea id="artstyles-textarea" class="flex-grow w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-sm resize-none focus:outline-none focus:border-blue-500"></textarea>
+                </div>
+
+                <!-- Mediums Section -->
+                <div class="bg-gray-800/50 p-6 rounded-lg flex flex-col">
+                    <h3 class="text-lg font-semibold mb-3">Mediums</h3>
+                    <textarea id="mediums-textarea" class="flex-grow w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-sm resize-none focus:outline-none focus:border-blue-500"></textarea>
+                </div>
+            </div>
+            <button id="save-all-prompt-data-btn" class="mt-6 px-6 py-3 bg-green-600 rounded-md hover:bg-green-700 transition-colors text-lg font-semibold self-center">Save All Changes</button>
+        </div>
     </main>
 
     <!-- GIF View Modal -->
@@ -150,7 +177,8 @@
             selectedTimelineNodes: new Map(), // timelineId -> [nodeId1, nodeId2]
             currentView: 'generate',
             timelinedNodeIds: new Set(),
-            hideTimelined: false
+            hideTimelined: false,
+            promptData: null // New state for prompt data
         };
 
         // --- DOM Elements ---
@@ -169,6 +197,14 @@
         const generatorCard = document.getElementById('generator-card');
         const imagePromptOverlay = document.getElementById('image-prompt-overlay');
         const hideTimelinedCheckbox = document.getElementById('hide-timelined-images');
+
+        // Prompt Data Elements
+        const promptDataView = document.getElementById('prompt-data-view');
+        const promptDataBtn = document.getElementById('prompt-data-view-btn');
+        const namesTextarea = document.getElementById('names-textarea');
+        const artstylesTextarea = document.getElementById('artstyles-textarea');
+        const mediumsTextarea = document.getElementById('mediums-textarea');
+        const saveAllPromptDataBtn = document.getElementById('save-all-prompt-data-btn');
 
         // GIF View Elements
         const gifViewModal = document.getElementById('gif-view-modal');
@@ -218,6 +254,7 @@
             loadingView.style.display = 'flex';
             generateView.style.display = 'none';
             studioView.style.display = 'none';
+            promptDataView.style.display = 'none'; // Hide new view
 
             await Promise.all([fetchNodes(), fetchTimelines()]);
 
@@ -225,9 +262,58 @@
             if (app.currentView === 'studio') {
                 renderStudio();
                 studioView.style.display = 'flex';
-            } else {
+            } else if (app.currentView === 'generate') {
                 renderGenerator();
                 generateView.style.display = 'flex';
+            } else if (app.currentView === 'prompt-data') {
+                fetchPromptData();
+                promptDataView.style.display = 'flex';
+            }
+        }
+
+        async function fetchPromptData() {
+            try {
+                const response = await fetch(`${API_URL}/v1/prompt_data`);
+                if (!response.ok) throw new Error("Failed to fetch prompt data");
+                app.promptData = await response.json();
+                renderPromptData();
+            } catch (error) {
+                console.error("Error fetching prompt data:", error);
+            }
+        }
+
+        function renderPromptData() {
+            if (app.promptData) {
+                namesTextarea.value = app.promptData.names ? app.promptData.names.join('\n') : '';
+                artstylesTextarea.value = app.promptData.artstyles ? app.promptData.artstyles.join('\n') : '';
+                mediumsTextarea.value = app.promptData.mediums ? app.promptData.mediums.join('\n') : '';
+            }
+        }
+
+        async function savePromptData() {
+            const dataToSave = {
+                names: namesTextarea.value.split('\n').map(s => s.trim()).filter(s => s !== ''),
+                artstyles: artstylesTextarea.value.split('\n').map(s => s.trim()).filter(s => s !== ''),
+                mediums: mediumsTextarea.value.split('\n').map(s => s.trim()).filter(s => s !== '')
+            };
+
+            try {
+                const response = await fetch(`${API_URL}/v1/prompt_data`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(dataToSave)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to save all prompt data.');
+                }
+
+                alert('All prompt data saved successfully!');
+                await fetchAllData();
+            } catch (error) {
+                console.error('Error saving prompt data:', error);
+                alert(`Error: ${error.message}`);
             }
         }
 
@@ -443,18 +529,26 @@
 
         window.switchView = function(view) {
             app.currentView = view;
+            generateView.style.display = 'none';
+            studioView.style.display = 'none';
+            promptDataView.style.display = 'none'; // Hide new view
+
+            generateBtn.classList.replace('bg-blue-600', 'bg-gray-600');
+            studioBtn.classList.replace('bg-blue-600', 'bg-gray-600');
+            promptDataBtn.classList.replace('bg-blue-600', 'bg-gray-600'); // Reset new button
+
             if (view === 'studio') {
-                generateView.style.display = 'none';
                 studioView.style.display = 'flex';
                 studioBtn.classList.replace('bg-gray-600', 'bg-blue-600');
-                generateBtn.classList.replace('bg-blue-600', 'bg-gray-600');
                 renderStudio();
-            } else {
-                studioView.style.display = 'none';
+            } else if (view === 'generate') {
                 generateView.style.display = 'flex';
                 generateBtn.classList.replace('bg-gray-600', 'bg-blue-600');
-                studioBtn.classList.replace('bg-blue-600', 'bg-gray-600');
                 renderGenerator();
+            } else if (view === 'prompt-data') { // New view case
+                promptDataView.style.display = 'flex';
+                promptDataBtn.classList.replace('bg-gray-600', 'bg-blue-600');
+                fetchPromptData(); // Fetch and render data for this view
             }
         }
 
@@ -787,11 +881,14 @@
 
         generateBtn.onclick = () => switchView('generate');
         studioBtn.onclick = () => switchView('studio');
+        promptDataBtn.onclick = () => switchView('prompt-data'); // New button event listener
         refreshNodesBtn.onclick = fetchAllData;
         generateTriggerBtn.onclick = handleGenerate;
         interpolateBtn.onclick = handleInterpolate;
         linkSelectedBtn.onclick = handleLinkNodes;
         createTimelineBtn.onclick = handleCreateTimeline;
+
+        saveAllPromptDataBtn.onclick = savePromptData; // New save all button event listener
 
         stepsSlider.oninput = () => {
             stepsValue.textContent = stepsSlider.value;
