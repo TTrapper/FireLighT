@@ -104,7 +104,7 @@
                         <input id="steps-slider" type="range" min="3" max="120" value="10" class="w-32 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
                         <span id="steps-value" class="ml-2 w-8 text-center text-sm">10</span>
                     </div>
-                    <button id="interpolate-btn" disabled class="px-4 py-2 bg-purple-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-700 transition-colors">Interpolate (2)</button>
+                    <button id="interpolate-btn" disabled class="px-4 py-2 bg-purple-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-700 transition-colors">Interpolate</button>
                     <button id="link-selected-btn" disabled class="px-4 py-2 bg-green-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700 transition-colors">Link Selected (2)</button>
                     <button id="create-timeline-btn" disabled class="px-4 py-2 bg-indigo-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-700 transition-colors">Create Timeline</button>
                 </div>
@@ -375,21 +375,12 @@
             timelineDiv.className = 'bg-gray-700 p-3 rounded-lg shadow-md mb-4';
             timelineDiv.dataset.timelineId = timeline.id; // Add identifier for scroll saving
 
-            const interpolateBtnId = `interp-btn-${timeline.id}`;
             const selectedNodes = app.selectedTimelineNodes.get(timeline.id) || [];
-            let isConsecutive = false;
-            if (selectedNodes.length === 2) {
-                const node1 = timeline.nodes[selectedNodes[0]];
-                if (node1 && node1.next === selectedNodes[1]) {
-                    isConsecutive = true;
-                }
-            }
 
             timelineDiv.innerHTML = `
                 <div class="flex justify-between items-center mb-2">
                     <h4 class="text-md font-semibold">${timeline.name} <span class="text-gray-400 text-sm">(${Object.keys(timeline.nodes).length} nodes)</span></h4>
                     <div class="flex items-center space-x-2">
-                        <button id="${interpolateBtnId}" ${!isConsecutive ? 'disabled' : ''} class="px-3 py-1 text-xs bg-purple-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-700 transition-colors">Interpolate (2)</button>
                         <button onclick="handleReverseTimeline('${timeline.id}')" class="text-gray-400 hover:text-white transition-colors" title="Reverse Timeline">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
@@ -415,12 +406,8 @@
             `;
             const filmstrip = timelineDiv.querySelector('.timeline-filmstrip');
             const toggleBtn = timelineDiv.querySelector('.timeline-toggle-btn');
-            const inPlaceInterpBtn = timelineDiv.querySelector(`#${interpolateBtnId}`);
 
             toggleBtn.onclick = () => toggleTimeline(toggleBtn);
-            if(isConsecutive) {
-                inPlaceInterpBtn.onclick = () => handleInterpolateInTimeline(timeline.id);
-            }
 
             const orderedNodeIds = getOrderedNodes(timeline);
             orderedNodeIds.forEach(nodeId => {
@@ -625,12 +612,7 @@
             if (nodeIndex > -1) {
                 selected.splice(nodeIndex, 1); // Deselect
             } else {
-                if (selected.length < 2) {
-                    selected.push(nodeId); // Select
-                } else {
-                    // If more than 2 are selected, start a new selection
-                    selected = [nodeId];
-                }
+                selected.push(nodeId); // Select
             }
 
             app.selectedTimelineNodes.set(timelineId, selected);
@@ -641,39 +623,36 @@
             const hasTwo = app.selectedNodes.length === 2;
             const hasAtLeastTwo = app.selectedNodes.length >= 2;
 
-            interpolateBtn.disabled = !hasTwo;
             linkSelectedBtn.disabled = !hasTwo;
             createTimelineBtn.disabled = !hasAtLeastTwo;
-        }
 
-        async function handleInterpolate() {
-            if (app.selectedNodes.length !== 2) return;
-
-            const steps = stepsSlider.value;
-            interpolateBtn.textContent = 'Interpolating...';
-            interpolateBtn.disabled = true;
-
-            try {
-                const response = await fetch(`${API_URL}/v1/interpolate`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        start_node_id: app.selectedNodes[0],
-                        end_node_id: app.selectedNodes[1],
-                        steps: parseInt(steps)
-                    })
-                });
-                if (!response.ok) throw new Error("Interpolation failed");
-
-                app.selectedNodes = [];
-                await fetchAllData();
-            } catch (error) {
-                console.error("Interpolation error:", error);
-            } finally {
-                interpolateBtn.textContent = `Interpolate (2)`;
-                updateStudioActions();
+            // Timeline selections for interpolation
+            let timelineSelection = [];
+            let timelineId = null;
+            if (app.selectedTimelineNodes.size > 0) {
+                timelineId = app.selectedTimelineNodes.keys().next().value;
+                timelineSelection = app.selectedTimelineNodes.get(timelineId) || [];
             }
+
+            let isConsecutive = false;
+            if (timelineSelection.length === 2 && timelineId) {
+                const timeline = app.timelines.find(t => t.id === timelineId);
+                if (timeline) {
+                    const node1 = timeline.nodes[timelineSelection[0]];
+                    const node2 = timeline.nodes[timelineSelection[1]];
+                    if ((node1 && node1.next === timelineSelection[1]) || (node2 && node2.next === timelineSelection[0])) {
+                        isConsecutive = true;
+                    }
+                }
+            }
+            
+            // The main interpolate button is now for timelines.
+            // It's disabled if no two consecutive nodes are selected in a timeline.
+            // It's also disabled if a gallery selection is active.
+            interpolateBtn.disabled = !isConsecutive || app.selectedNodes.length > 0;
         }
+
+        
 
         window.handleInterpolateInTimeline = async function(timelineId) {
             const selectedNodes = app.selectedTimelineNodes.get(timelineId);
@@ -692,9 +671,8 @@
             }
 
             const steps = parseInt(stepsSlider.value);
-            const interpBtn = document.getElementById(`interp-btn-${timelineId}`);
-            interpBtn.textContent = '...';
-            interpBtn.disabled = true;
+            interpolateBtn.textContent = '...';
+            interpolateBtn.disabled = true;
 
             try {
                 const response = await fetch(`${API_URL}/v1/timelines/${timelineId}/interpolate`, {
@@ -718,7 +696,7 @@
                 console.error("In-place interpolation error:", error);
                 alert(`Error: ${error.message}`);
             } finally {
-                // The button will be re-rendered, no need to reset its state here
+                interpolateBtn.textContent = 'Interpolate (2)';
             }
         }
 
@@ -904,7 +882,12 @@
         promptDataBtn.onclick = () => switchView('prompt-data'); // New button event listener
         refreshNodesBtn.onclick = fetchAllData;
         generateTriggerBtn.onclick = handleGenerate;
-        interpolateBtn.onclick = handleInterpolate;
+        interpolateBtn.onclick = () => {
+            if (app.selectedTimelineNodes.size > 0) {
+                const timelineId = app.selectedTimelineNodes.keys().next().value;
+                handleInterpolateInTimeline(timelineId);
+            }
+        };
         linkSelectedBtn.onclick = handleLinkNodes;
         createTimelineBtn.onclick = handleCreateTimeline;
 
