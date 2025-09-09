@@ -635,13 +635,17 @@
             }
 
             let isConsecutive = false;
-            if (timelineSelection.length === 2 && timelineId) {
+            if (timelineSelection.length >= 2 && timelineId) {
                 const timeline = app.timelines.find(t => t.id === timelineId);
                 if (timeline) {
-                    const node1 = timeline.nodes[timelineSelection[0]];
-                    const node2 = timeline.nodes[timelineSelection[1]];
-                    if ((node1 && node1.next === timelineSelection[1]) || (node2 && node2.next === timelineSelection[0])) {
-                        isConsecutive = true;
+                    const orderedNodes = getOrderedNodes(timeline);
+                    for (let i = 0; i < orderedNodes.length - 1; i++) {
+                        const node1 = orderedNodes[i];
+                        const node2 = orderedNodes[i+1];
+                        if (timelineSelection.includes(node1) && timelineSelection.includes(node2)) {
+                            isConsecutive = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -656,17 +660,23 @@
 
         window.handleInterpolateInTimeline = async function(timelineId) {
             const selectedNodes = app.selectedTimelineNodes.get(timelineId);
-            if (!selectedNodes || selectedNodes.length !== 2) return;
+            if (!selectedNodes || selectedNodes.length < 2) return;
 
-            // Ensure order is correct
             const timeline = app.timelines.find(t => t.id === timelineId);
-            let startNodeId, endNodeId;
-            if (timeline.nodes[selectedNodes[0]].next === selectedNodes[1]) {
-                [startNodeId, endNodeId] = selectedNodes;
-            } else if (timeline.nodes[selectedNodes[1]].next === selectedNodes[0]) {
-                [endNodeId, startNodeId] = selectedNodes;
-            } else {
-                console.error("Selected timeline nodes are not consecutive.");
+            if (!timeline) return;
+
+            const orderedNodes = getOrderedNodes(timeline);
+            const pairs = [];
+            for (let i = 0; i < orderedNodes.length - 1; i++) {
+                const node1 = orderedNodes[i];
+                const node2 = orderedNodes[i+1];
+                if (selectedNodes.includes(node1) && selectedNodes.includes(node2)) {
+                    pairs.push([node1, node2]);
+                }
+            }
+
+            if (pairs.length === 0) {
+                alert("No consecutive nodes selected for interpolation.");
                 return;
             }
 
@@ -675,18 +685,21 @@
             interpolateBtn.disabled = true;
 
             try {
-                const response = await fetch(`${API_URL}/v1/timelines/${timelineId}/interpolate`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        start_node_id: startNodeId,
-                        end_node_id: endNodeId,
-                        steps: steps
-                    })
-                });
-                 if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.error || "In-place interpolation failed");
+                for (const pair of pairs.reverse()) {
+                    const [startNodeId, endNodeId] = pair;
+                    const response = await fetch(`${API_URL}/v1/timelines/${timelineId}/interpolate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            start_node_id: startNodeId,
+                            end_node_id: endNodeId,
+                            steps: steps
+                        })
+                    });
+                     if (!response.ok) {
+                        const err = await response.json();
+                        throw new Error(err.error || `Interpolation failed for pair ${startNodeId.substring(0,4)}-${endNodeId.substring(0,4)}`);
+                    }
                 }
 
                 app.selectedTimelineNodes.delete(timelineId);
@@ -696,7 +709,7 @@
                 console.error("In-place interpolation error:", error);
                 alert(`Error: ${error.message}`);
             } finally {
-                interpolateBtn.textContent = 'Interpolate (2)';
+                interpolateBtn.textContent = 'Interpolate';
             }
         }
 
