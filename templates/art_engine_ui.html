@@ -56,7 +56,7 @@
         </div>
 
         <!-- Generate View -->
-        <div id="generate-view" class="hidden h-full flex flex-col items-center justify-center p-4">
+        <div id="generate-view" class="hidden h-full flex flex-col items-center justify-center p-4 relative">
 
             <!-- This container holds the image and rating buttons -->
             <div id="generator-card-container" class="hidden">
@@ -75,6 +75,7 @@
                     <button onclick="rateCurrentImage('meh')" class="px-8 py-3 bg-yellow-600 rounded-lg text-xl font-semibold hover:bg-yellow-700 transform hover:scale-105 transition-all">Meh</button>
                     <button onclick="rateCurrentImage('good')" class="px-8 py-3 bg-green-600 rounded-lg text-xl font-semibold hover:bg-green-700 transform hover:scale-105 transition-all">Good</button>
                 </div>
+                <p id="queued-images-counter" class="text-sm text-gray-400 mt-2 h-5"></p>
             </div>
 
             <!-- This view is shown when there are no images to rate -->
@@ -87,6 +88,16 @@
                 <p id="generate-feedback" class="text-sm text-gray-500 mt-2 h-4"></p>
                 <button id="refresh-nodes-btn" class="mt-4 px-4 py-2 bg-gray-600 rounded-md hover:bg-gray-700">Refresh Unrated</button>
             </div>
+
+            <!-- Generation Progress Indicator -->
+            <div id="generator-progress-indicator" class="hidden absolute bottom-4 left-4 right-4 bg-gray-800 p-3 rounded-lg shadow-lg max-w-xl mx-auto">
+                <p class="text-sm font-medium">Generating images: <span id="generation-progress-text">0 / 0</span></p>
+                <div class="w-full bg-gray-700 rounded-full h-2.5 mt-2">
+                    <div id="generation-progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                </div>
+            </div>
+
+            
         </div>
 
         <!-- Studio View -->
@@ -178,6 +189,7 @@
             currentView: 'generate',
             timelinedNodeIds: new Set(),
             hideInterpolated: false,
+            generationPollingInterval: null,
             promptData: null // New state for prompt data
         };
 
@@ -220,6 +232,86 @@
         let gifAnimationDirection = 1;
         let gifTimelineImages = [];
 
+        // --- Polling for Generation Status ---
+        let knownCompleted = 0;
+        async function fetchNewNodes() {
+            try {
+                const response = await fetch(`${API_URL}/v1/nodes`);
+                if (!response.ok) throw new Error("Failed to fetch new nodes");
+                const allNodes = await response.json();
+                
+                const existingNodeIds = new Set(app.nodes.map(n => n.id));
+                const newNodes = allNodes.filter(n => !existingNodeIds.has(n.id));
+
+                if (newNodes.length > 0) {
+                    // Add to main nodes list, sorted by date
+                    app.nodes.unshift(...newNodes.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+
+                    // Add to unrated queue
+                    const newUnratedNodes = newNodes.filter(n => n.rating === null);
+                    app.unratedNodes.push(...newUnratedNodes);
+
+                    if (document.getElementById('generator-idle-view').offsetParent) {
+                         renderGenerator();
+                    } else {
+                        updateQueuedCounter();
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching new nodes:", error);
+            }
+        }
+
+        function updateQueuedCounter() {
+            const counter = document.getElementById('queued-images-counter');
+            const queueCount = app.unratedNodes.length > 0 ? app.unratedNodes.length - 1 : 0;
+            if (queueCount > 0) {
+                counter.textContent = `${queueCount} more image${queueCount > 1 ? 's' : ''} in queue.`;
+            } else {
+                counter.textContent = '';
+            }
+        }
+
+        function startGenerationPolling() {
+            if (app.generationPollingInterval) return; // Already polling
+
+            knownCompleted = 0;
+            document.getElementById('generator-progress-indicator').classList.remove('hidden');
+
+            app.generationPollingInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_URL}/v1/status`);
+                    if (!response.ok) throw new Error("Failed to fetch status");
+                    const status = await response.json();
+
+                    if (status.is_generating) {
+                        const progressPercentage = status.total_images > 0 ? (status.completed_images / status.total_images) * 100 : 0;
+                        document.getElementById('generation-progress-bar').style.width = `${progressPercentage}%`;
+                        document.getElementById('generation-progress-text').textContent = `${status.completed_images} / ${status.total_images}`;
+
+                        if (status.completed_images > knownCompleted) {
+                            await fetchNewNodes();
+                            knownCompleted = status.completed_images;
+                        }
+                    } else {
+                        stopGenerationPolling();
+                        await fetchAllData(); 
+                    }
+                } catch (error) {
+                    console.error("Error polling for generation status:", error);
+                    stopGenerationPolling(); // Stop on error
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+
+        function stopGenerationPolling() {
+            if (app.generationPollingInterval) {
+                clearInterval(app.generationPollingInterval);
+                app.generationPollingInterval = null;
+                document.getElementById('generator-progress-indicator').classList.add('hidden');
+            }
+        }
+
         // --- Core Functions ---
 
         async function fetchNodes() {
@@ -257,6 +349,19 @@
             promptDataView.style.display = 'none'; // Hide new view
 
             await Promise.all([fetchNodes(), fetchTimelines()]);
+
+            // Check generation status on load
+            try {
+                const response = await fetch(`${API_URL}/v1/status`);
+                if (response.ok) {
+                    const status = await response.json();
+                    if (status.is_generating) {
+                        startGenerationPolling();
+                    }
+                }
+            } catch (e) {
+                console.warn("Could not fetch generation status. The backend might be an older version.");
+            }
 
             loadingView.style.display = 'none';
             if (app.currentView === 'studio') {
@@ -353,6 +458,7 @@
                 cardContainer.classList.add('hidden');
                 idleView.classList.remove('hidden');
             }
+            updateQueuedCounter();
         }
 
         function getOrderedNodes(timeline) {
@@ -572,6 +678,7 @@
                 } else if (app.currentView === 'studio') {
                     renderStudio();
                 }
+                updateQueuedCounter();
 
             } catch (error) {
                 console.error("Rating error:", error);
@@ -795,11 +902,6 @@
 
         async function handleGenerate() {
             const count = document.getElementById('generate-count-input').value;
-            const feedbackEl = document.getElementById('generate-feedback');
-
-            generateTriggerBtn.disabled = true;
-            generateTriggerBtn.textContent = 'Generating...'
-            feedbackEl.textContent = `Requesting ${count} images...`;
 
             try {
                  const response = await fetch(`${API_URL}/v1/generate`, {
@@ -808,15 +910,12 @@
                     body: JSON.stringify({ num_images: parseInt(count) })
                 });
                 if (!response.ok) throw new Error("Generation request failed");
-                feedbackEl.textContent = `Generation started! Refreshing...`;
-                setTimeout(fetchAllData, 1000); // Give backend a moment
+                
+                startGenerationPolling();
+
             } catch(error) {
                 console.error("Generate error:", error);
-                feedbackEl.textContent = 'Generation failed.';
-            } finally {
-                generateTriggerBtn.disabled = false;
-                generateTriggerBtn.textContent = 'Generate'
-                setTimeout(() => feedbackEl.textContent = '', 3000);
+                alert("Failed to start generation.");
             }
         }
 

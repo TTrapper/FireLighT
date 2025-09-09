@@ -200,15 +200,44 @@ def generate_image_from_tensors(latents, prompt_embeds, seed=0):
 
 
 
+# --- Global State for Generation ---
+GENERATION_STATUS = {
+    "is_generating": False,
+    "total_images": 0,
+    "completed_images": 0,
+}
+GENERATION_LOCK = threading.Lock()
+
+@app.route('/v1/status', methods=['GET'])
+def get_status():
+    with GENERATION_LOCK:
+        return jsonify(GENERATION_STATUS)
+
 def generate_n_images(count):
     """Generates a given number of new art nodes in a thread."""
+    global GENERATION_STATUS
+    with GENERATION_LOCK:
+        if GENERATION_STATUS["is_generating"]:
+            print("Generation is already in progress.")
+            return
+        GENERATION_STATUS["is_generating"] = True
+        GENERATION_STATUS["total_images"] = count
+        GENERATION_STATUS["completed_images"] = 0
+
     print(f"Starting background generation of {count} images.")
     for i in range(count):
         try:
             print(f"Generating image {i+1}/{count}...")
             generate_new_art_node()
+            with GENERATION_LOCK:
+                GENERATION_STATUS["completed_images"] = i + 1
         except Exception as e:
             print(f"Error during batch generation: {e}")
+            # Optionally break or continue
+            break # Stop generation on error
+
+    with GENERATION_LOCK:
+        GENERATION_STATUS["is_generating"] = False
     print(f"Finished generating {count} images.")
 
 
