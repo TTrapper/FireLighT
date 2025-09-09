@@ -491,6 +491,15 @@
                 overlay.textContent = node.prompt_text;
                 div.appendChild(overlay);
 
+                const mehButton = document.createElement('button');
+                mehButton.textContent = 'Meh';
+                mehButton.className = 'absolute top-1 right-1 px-2 py-1 bg-yellow-600 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-yellow-700';
+                mehButton.onclick = (e) => {
+                    e.stopPropagation(); // prevent node selection
+                    rateNode(node.id, 'meh');
+                };
+                div.appendChild(mehButton);
+
                 grid.appendChild(div);
             });
 
@@ -552,29 +561,40 @@
             }
         }
 
-        window.rateCurrentImage = async function(rating) {
-            if (!app.unratedNodes.length) return;
-            const currentNode = app.unratedNodes[0];
-
+        async function rateNode(nodeId, rating) {
             try {
-                const response = await fetch(`${API_URL}/v1/nodes/${currentNode.id}/rate`, {
+                const response = await fetch(`${API_URL}/v1/nodes/${nodeId}/rate`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ rating })
                 });
                 if (!response.ok) throw new Error(`Failed to rate image: ${response.statusText}`);
 
-                const ratedNode = app.nodes.find(n => n.id === currentNode.id);
+                const ratedNode = app.nodes.find(n => n.id === nodeId);
                 if (ratedNode) {
                     ratedNode.rating = rating;
                 }
 
-                app.unratedNodes.shift();
-                renderGenerator();
+                const unratedNodeIndex = app.unratedNodes.findIndex(n => n.id === nodeId);
+                if (unratedNodeIndex > -1) {
+                    app.unratedNodes.splice(unratedNodeIndex, 1);
+                }
+
+                if (app.currentView === 'generate') {
+                    renderGenerator();
+                } else if (app.currentView === 'studio') {
+                    renderStudio();
+                }
 
             } catch (error) {
                 console.error("Rating error:", error);
             }
+        }
+
+        window.rateCurrentImage = async function(rating) {
+            if (!app.unratedNodes.length) return;
+            const currentNode = app.unratedNodes[0];
+            await rateNode(currentNode.id, rating);
         }
 
         function handleNodeSelection(nodeId) {
