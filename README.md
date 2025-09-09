@@ -2,6 +2,12 @@
 
 ![FireLighT Logo](logo.jpeg)
 
+<p align="center">
+  <img src="assets/ftl-demo.gif" width="48%">
+  &nbsp;
+  <img src="assets/ftl-interpolate-demo.gif" width="48%">
+</p>
+
 FireLighT (FLT) is a creative project designed to explore the generation and manipulation of AI-generated imagery. What started as a fun endeavor to find a name for our band (which we knew had to have the acronym FTL and involve sci-fi themes) has evolved into a powerful tool for generating random images around a theme, rating them for future training, and creating captivating animations by interpolating between them with fine-grained control over transitions.
 
 ## Features
