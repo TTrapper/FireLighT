@@ -1,7 +1,5 @@
 # FireLighT - FTL Art Studio
 
-![FireLighT Logo](logo.jpeg)
-
 <p align="center">
   <img src="assets/ftl-demo.gif" width="48%">
   &nbsp;
@@ -134,3 +132,5 @@ We welcome contributions! Feel free to open issues for bugs or feature requests,
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+![FireLighT Logo](logo.jpeg)
