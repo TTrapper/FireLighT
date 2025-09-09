@@ -43,7 +43,7 @@ pipe = InterpPipeline.from_pretrained(
 )
 pipe.load_lora_weights(LORA_NAME)
 pipe.fuse_lora() # Fuse LoRA weights for performance
-#pipe.enable_model_cpu_offload()
+pipe.enable_model_cpu_offload()
 pipe.safety_checker = None
 print("Model loaded.")
 
