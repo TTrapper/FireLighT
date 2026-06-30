@@ -84,10 +84,10 @@ This intricate modification enables FireLighT to precisely control the image gen
     ```bash
     python art_engine_server.py
     ```
-    This will start the Flask server, which handles image generation, data storage, and API endpoints. The server will typically run on `http://172.0.0.1:5001`.
+    This will start the Flask server, which handles image generation, data storage, and API endpoints. The server will typically run on `http://127.0.0.1:5001`.
 
 2.  **Access the Web UI:**
-    Open your web browser and go to `http://172.0.0.1:5001`.
+    Open your web browser and go to `http://127.0.0.1:5001`.
 
 ### Web UI Sections
 

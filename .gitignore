@@ -1,0 +1,19 @@
+# Python virtual environments
+env/
+venv/
+.venv/
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Generated runtime data (images, latents, nodes, timelines)
+data/
+
+# Hugging Face model cache (if ever set locally)
+.cache/
+
+# OS / editor cruft
+.DS_Store
+*.swp

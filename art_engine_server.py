@@ -40,6 +40,9 @@ CORS(app) # Allow cross-origin requests for the frontend
 print("Loading diffusion model...")
 pipe = InterpPipeline.from_pretrained(
     MODEL_NAME,
+    torch_dtype=torch.float32,  # Load all components at one dtype; the model's
+    # text_encoder ships as fp16 while unet/vae are fp32, which otherwise causes a
+    # "mat1 and mat2 must have the same dtype" error during the unet forward pass.
 )
 pipe.load_lora_weights(LORA_NAME)
 pipe.fuse_lora() # Fuse LoRA weights for performance
