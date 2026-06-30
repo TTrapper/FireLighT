@@ -111,21 +111,6 @@ def update_prompt_data():
 
 # --- Core Logic ---
 
-def slerp(t, v0, v1, DOT_THRESHOLD=0.9995):
-    """Spherical linear interpolation."""
-    v0 = v0.flatten().numpy()
-    v1 = v1.flatten().numpy()
-    dot = np.sum(v0 * v1)
-    if np.abs(dot) > DOT_THRESHOLD:
-        return (1 - t) * v0 + t * v1
-    theta_0 = np.arccos(dot)
-    sin_theta_0 = np.sin(theta_0)
-    theta_t = theta_0 * t
-    sin_theta_t = np.sin(theta_t)
-    s0 = np.sin(theta_0 - theta_t) / sin_theta_0
-    s1 = sin_theta_t / sin_theta_0
-    return (s0 * v0 + s1 * v1).reshape(1, 4, 64, 64) # Reshape back to latent dimensions
-
 def generate_new_art_node(prompt_text=None, seed=None):
     """Generates a new image, tensors, and metadata file."""
     node_id = str(uuid.uuid4())

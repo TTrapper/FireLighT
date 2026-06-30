@@ -44,17 +44,21 @@ def create_gif(frame_folder, output_path, bounce=True, duration=100):
     )
     print(f"Saved GIF to {output_path}")
 
-def slerp(p0, p1, t):
+def slerp(p0, p1, t, dot_threshold=0.9995):
     """Spherical Linear Interpolation between two points."""
     shape = np.copy(p0.shape)
     p0 = np.reshape(p0, [-1])
     p1 = np.reshape(p1, [-1])
-    omega = np.arccos(np.dot(p0 / np.linalg.norm(p0), p1 / np.linalg.norm(p1)))
-    sin_omega = np.sin(omega)
-    
-    if sin_omega == 0:
+    dot = np.dot(p0 / np.linalg.norm(p0), p1 / np.linalg.norm(p1))
+
+    # When the vectors are nearly (anti)parallel, omega -> 0 (or pi) and the
+    # sin(omega) division below becomes numerically unstable. Linear interp is
+    # visually identical in that regime, so fall back to it.
+    if np.abs(dot) > dot_threshold:
         return np.reshape((1.0 - t) * p0 + t * p1, shape)
-    
+
+    omega = np.arccos(dot)
+    sin_omega = np.sin(omega)
     rotated = np.sin((1.0 - t) * omega) / sin_omega * p0 + np.sin(t * omega) / sin_omega * p1
     return np.reshape(rotated, shape)
 
